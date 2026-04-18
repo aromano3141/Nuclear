@@ -1,0 +1,7 @@
+radionuclide,r2_matern15,r2_exponential,preferred
+Cs137,0.991,-5.3067,Matérn-1.5
+Cs134,0.9867,0.9901,Exponential
+Sr90,0.9961,0.985,Matérn-1.5
+Eu154,0.9631,-9.614,Matérn-1.5
+Pu238,0.9608,0.9409,Matérn-1.5
+Pu239_240,0.9513,0.944,Matérn-1.5

@@ -1,0 +1,7 @@
+Radionuclide,Type,N_obs,Length_scale_deg,Length_scale_km,Mean_NN_dist_km,Median_NN_dist_km,Nugget_to_sill,N_indep_features,Resolvable_features,Confidence,Calib_alpha
+Cs137,fission,1323,0.1242,8.6,0.8,0.6,0.159,217.8,Sub-regional patterns (5–15 km),HIGH,3.627
+Cs134,fission,779,0.18,12.5,0.7,0.7,0.3,3.6,Sub-regional patterns (5–15 km),HIGH,4.533
+Sr90,fission,1186,0.1338,9.3,0.9,0.6,0.194,187.6,Sub-regional patterns (5–15 km),HIGH,3.506
+Eu154,activation,502,0.1256,8.7,0.7,0.5,0.318,7.7,Sub-regional patterns (5–15 km),HIGH,4.238
+Pu238,transuranic,94,1.3595,94.2,4.6,1.1,0.024,1.8,Broad-scale gradient only (> 40 km),LOW,4.736
+Pu239_240,transuranic,94,0.9418,65.2,4.6,1.1,0.048,3.8,Broad-scale gradient only (> 40 km),LOW,3.726

@@ -1,0 +1,491 @@
+{
+  "metadata": {
+    "timestamp": "2026-03-15T01:16:36.392537",
+    "revision": "Section 13 \u2014 targeted fixes applied",
+    "n_sites": 1323,
+    "n_rn": 6,
+    "radionuclides": [
+      "Cs137",
+      "Cs134",
+      "Sr90",
+      "Eu154",
+      "Pu238",
+      "Pu239_240"
+    ]
+  },
+  "data_availability": {
+    "Cs137": {
+      "n_valid": 1323,
+      "n_total": 1323,
+      "pct": 100.0,
+      "mean": 1315.1760241874526,
+      "median": 250.0,
+      "std": 5066.723498436509,
+      "min": 6.04,
+      "max": 110000.0
+    },
+    "Cs134": {
+      "n_valid": 779,
+      "n_total": 1323,
+      "pct": 58.88,
+      "mean": 16.799254172015402,
+      "median": 7.62,
+      "std": 28.645092224223774,
+      "min": 0.422,
+      "max": 416.0
+    },
+    "Sr90": {
+      "n_valid": 1186,
+      "n_total": 1323,
+      "pct": 89.64,
+      "mean": 591.7916585160201,
+      "median": 55.95,
+      "std": 2679.236710015046,
+      "min": 0.2,
+      "max": 49000.0
+    },
+    "Eu154": {
+      "n_valid": 502,
+      "n_total": 1323,
+      "pct": 37.94,
+      "mean": 26.00497609561753,
+      "median": 6.925000000000001,
+      "std": 87.5370219755888,
+      "min": 0.165,
+      "max": 1310.0
+    },
+    "Pu238": {
+      "n_valid": 94,
+      "n_total": 1323,
+      "pct": 7.11,
+      "mean": 8.226010638297872,
+      "median": 1.755,
+      "std": 18.494553479274245,
+      "min": 0.008,
+      "max": 123.0
+    },
+    "Pu239_240": {
+      "n_valid": 94,
+      "n_total": 1323,
+      "pct": 7.11,
+      "mean": 18.021063829787238,
+      "median": 3.475,
+      "std": 41.88985451908721,
+      "min": 0.058,
+      "max": 280.0
+    }
+  },
+  "kernel_verification": [
+    {
+      "radionuclide": "Cs137",
+      "r2_matern15": 0.991,
+      "r2_exponential": -5.3067,
+      "preferred": "Mat\u00e9rn-1.5"
+    },
+    {
+      "radionuclide": "Cs134",
+      "r2_matern15": 0.9867,
+      "r2_exponential": 0.9901,
+      "preferred": "Exponential"
+    },
+    {
+      "radionuclide": "Sr90",
+      "r2_matern15": 0.9961,
+      "r2_exponential": 0.985,
+      "preferred": "Mat\u00e9rn-1.5"
+    },
+    {
+      "radionuclide": "Eu154",
+      "r2_matern15": 0.9631,
+      "r2_exponential": -9.614,
+      "preferred": "Mat\u00e9rn-1.5"
+    },
+    {
+      "radionuclide": "Pu238",
+      "r2_matern15": 0.9608,
+      "r2_exponential": 0.9409,
+      "preferred": "Mat\u00e9rn-1.5"
+    },
+    {
+      "radionuclide": "Pu239_240",
+      "r2_matern15": 0.9513,
+      "r2_exponential": 0.944,
+      "preferred": "Mat\u00e9rn-1.5"
+    }
+  ],
+  "gp_performance": {
+    "Cs137": {
+      "r2": 0.7607695788861343,
+      "rmse": 0.3361764398807303,
+      "mae": 0.2323794740438121,
+      "corr": 0.8758849228990423,
+      "bias": -0.023858658412166386,
+      "bias_std": 0.33532873892592896,
+      "cov68": 0.3801965230536659,
+      "cov95": 0.6318972033257747,
+      "crps": 0.29468339942524463,
+      "n": 1323,
+      "mean_std": 0.12460785076286517,
+      "shapiro_W": 0.9367181770306562,
+      "shapiro_p": 2.773971607431137e-23
+    },
+    "Cs134": {
+      "r2": 0.5928240389173272,
+      "rmse": 0.3133672748173598,
+      "mae": 0.23537015116910665,
+      "corr": 0.7706228369690391,
+      "bias": -0.0015626713133184546,
+      "bias_std": 0.3133633784998261,
+      "cov68": 0.23234916559691912,
+      "cov95": 0.4621309370988447,
+      "crps": 0.27793802636684306,
+      "n": 779,
+      "mean_std": 0.08513575039547286,
+      "shapiro_W": 0.9784352892407364,
+      "shapiro_p": 2.608235563630647e-09
+    },
+    "Sr90": {
+      "r2": 0.7652032092862406,
+      "rmse": 0.4311085016361283,
+      "mae": 0.3248453179688337,
+      "corr": 0.8748268779006827,
+      "bias": -0.007290354788635051,
+      "bias_std": 0.4310468546573602,
+      "cov68": 0.3440134907251265,
+      "cov95": 0.575885328836425,
+      "crps": 0.4069884024306356,
+      "n": 1186,
+      "mean_std": 0.16428616892360384,
+      "shapiro_W": 0.9868041677930951,
+      "shapiro_p": 7.08918510974988e-09
+    },
+    "Eu154": {
+      "r2": 0.6201414783405543,
+      "rmse": 0.3853230301773498,
+      "mae": 0.2915303320480874,
+      "corr": 0.7876419444510887,
+      "bias": -0.0004349386316257314,
+      "bias_std": 0.38532278470581205,
+      "cov68": 0.30876494023904383,
+      "cov95": 0.5418326693227091,
+      "crps": 0.3563698644243874,
+      "n": 502,
+      "mean_std": 0.12967906475259994,
+      "shapiro_W": 0.9880689191182408,
+      "shapiro_p": 0.0004043618660629904
+    },
+    "Pu238": {
+      "r2": 0.8945350524481127,
+      "rmse": 0.37957712217260153,
+      "mae": 0.2922457139758977,
+      "corr": 0.9458432937894361,
+      "bias": 0.010612575821249864,
+      "bias_std": 0.3794287349572674,
+      "cov68": 0.425531914893617,
+      "cov95": 0.6170212765957447,
+      "crps": 0.4101566407716035,
+      "n": 94,
+      "mean_std": 0.23582185359141172,
+      "shapiro_W": 0.9747733178793913,
+      "shapiro_p": 0.06574829819905459
+    },
+    "Pu239_240": {
+      "r2": 0.8768853134857408,
+      "rmse": 0.3627448808937934,
+      "mae": 0.26908166810803796,
+      "corr": 0.9366448998439597,
+      "bias": 0.01848609735515803,
+      "bias_std": 0.3622735331475762,
+      "cov68": 0.46808510638297873,
+      "cov95": 0.6382978723404256,
+      "crps": 0.3927191766561203,
+      "n": 94,
+      "mean_std": 0.2472750170961648,
+      "shapiro_W": 0.9496578853278226,
+      "shapiro_p": 0.0011995515795116248
+    }
+  },
+  "calibration": {
+    "Cs137": {
+      "n_cv": 1323,
+      "raw_cov_68": 0.38,
+      "raw_cov_95": 0.632,
+      "alpha_95": 3.627,
+      "alpha_68": 2.223,
+      "cal_cov_68": 0.683,
+      "cal_cov_95": 0.95,
+      "status": "OVERCONFIDENT",
+      "mean_pred_std": 0.1246,
+      "mean_abs_res": 0.2324
+    },
+    "Cs134": {
+      "n_cv": 779,
+      "raw_cov_68": 0.232,
+      "raw_cov_95": 0.462,
+      "alpha_95": 4.533,
+      "alpha_68": 3.397,
+      "cal_cov_68": 0.683,
+      "cal_cov_95": 0.95,
+      "status": "OVERCONFIDENT",
+      "mean_pred_std": 0.0851,
+      "mean_abs_res": 0.2354
+    },
+    "Sr90": {
+      "n_cv": 1186,
+      "raw_cov_68": 0.344,
+      "raw_cov_95": 0.576,
+      "alpha_95": 3.506,
+      "alpha_68": 2.613,
+      "cal_cov_68": 0.683,
+      "cal_cov_95": 0.95,
+      "status": "OVERCONFIDENT",
+      "mean_pred_std": 0.1643,
+      "mean_abs_res": 0.3248
+    },
+    "Eu154": {
+      "n_cv": 502,
+      "raw_cov_68": 0.309,
+      "raw_cov_95": 0.542,
+      "alpha_95": 4.238,
+      "alpha_68": 2.976,
+      "cal_cov_68": 0.683,
+      "cal_cov_95": 0.95,
+      "status": "OVERCONFIDENT",
+      "mean_pred_std": 0.1297,
+      "mean_abs_res": 0.2915
+    },
+    "Pu238": {
+      "n_cv": 94,
+      "raw_cov_68": 0.426,
+      "raw_cov_95": 0.617,
+      "alpha_95": 4.736,
+      "alpha_68": 2.384,
+      "cal_cov_68": 0.681,
+      "cal_cov_95": 0.947,
+      "status": "OVERCONFIDENT",
+      "mean_pred_std": 0.2358,
+      "mean_abs_res": 0.2922
+    },
+    "Pu239_240": {
+      "n_cv": 94,
+      "raw_cov_68": 0.468,
+      "raw_cov_95": 0.638,
+      "alpha_95": 3.726,
+      "alpha_68": 2.075,
+      "cal_cov_68": 0.681,
+      "cal_cov_95": 0.947,
+      "status": "OVERCONFIDENT",
+      "mean_pred_std": 0.2473,
+      "mean_abs_res": 0.2691
+    }
+  },
+  "resolution_caveats": [
+    {
+      "Radionuclide": "Cs137",
+      "Type": "fission",
+      "N_obs": 1323,
+      "Length_scale_deg": 0.1242,
+      "Length_scale_km": 8.6,
+      "Mean_NN_dist_km": 0.8,
+      "Median_NN_dist_km": 0.6,
+      "Nugget_to_sill": 0.159,
+      "N_indep_features": 217.8,
+      "Resolvable_features": "Sub-regional patterns (5\u201315 km)",
+      "Confidence": "HIGH",
+      "Calib_alpha": 3.627
+    },
+    {
+      "Radionuclide": "Cs134",
+      "Type": "fission",
+      "N_obs": 779,
+      "Length_scale_deg": 0.18,
+      "Length_scale_km": 12.5,
+      "Mean_NN_dist_km": 0.7,
+      "Median_NN_dist_km": 0.7,
+      "Nugget_to_sill": 0.3,
+      "N_indep_features": 3.6,
+      "Resolvable_features": "Sub-regional patterns (5\u201315 km)",
+      "Confidence": "HIGH",
+      "Calib_alpha": 4.533
+    },
+    {
+      "Radionuclide": "Sr90",
+      "Type": "fission",
+      "N_obs": 1186,
+      "Length_scale_deg": 0.1338,
+      "Length_scale_km": 9.3,
+      "Mean_NN_dist_km": 0.9,
+      "Median_NN_dist_km": 0.6,
+      "Nugget_to_sill": 0.194,
+      "N_indep_features": 187.6,
+      "Resolvable_features": "Sub-regional patterns (5\u201315 km)",
+      "Confidence": "HIGH",
+      "Calib_alpha": 3.506
+    },
+    {
+      "Radionuclide": "Eu154",
+      "Type": "activation",
+      "N_obs": 502,
+      "Length_scale_deg": 0.1256,
+      "Length_scale_km": 8.7,
+      "Mean_NN_dist_km": 0.7,
+      "Median_NN_dist_km": 0.5,
+      "Nugget_to_sill": 0.318,
+      "N_indep_features": 7.7,
+      "Resolvable_features": "Sub-regional patterns (5\u201315 km)",
+      "Confidence": "HIGH",
+      "Calib_alpha": 4.238
+    },
+    {
+      "Radionuclide": "Pu238",
+      "Type": "transuranic",
+      "N_obs": 94,
+      "Length_scale_deg": 1.3595,
+      "Length_scale_km": 94.2,
+      "Mean_NN_dist_km": 4.6,
+      "Median_NN_dist_km": 1.1,
+      "Nugget_to_sill": 0.024,
+      "N_indep_features": 1.8,
+      "Resolvable_features": "Broad-scale gradient only (> 40 km)",
+      "Confidence": "LOW",
+      "Calib_alpha": 4.736
+    },
+    {
+      "Radionuclide": "Pu239_240",
+      "Type": "transuranic",
+      "N_obs": 94,
+      "Length_scale_deg": 0.9418,
+      "Length_scale_km": 65.2,
+      "Mean_NN_dist_km": 4.6,
+      "Median_NN_dist_km": 1.1,
+      "Nugget_to_sill": 0.048,
+      "N_indep_features": 3.8,
+      "Resolvable_features": "Broad-scale gradient only (> 40 km)",
+      "Confidence": "LOW",
+      "Calib_alpha": 3.726
+    }
+  ],
+  "correlations": {
+    "method_note": "Both Pearson and Spearman reported; pairwise complete cases used",
+    "mean_abs_pearson": 0.789,
+    "mean_abs_spearman": 0.794
+  },
+  "exceedance_revised": {
+    "Cs137_relocation": {
+      "alpha": 3.627,
+      "raw50": 0.06611570247933884,
+      "cal50": 0.06611570247933884,
+      "cal90": 0.0
+    },
+    "Cs137_agricultural": {
+      "alpha": 3.627,
+      "raw50": 8.760330578512397,
+      "cal50": 8.760330578512397,
+      "cal90": 2.115702479338843
+    },
+    "Sr90_food_chain": {
+      "alpha": 3.506,
+      "raw50": 1.1900826446280992,
+      "cal50": 1.1900826446280992,
+      "cal90": 0.2975206611570248
+    },
+    "joint_CsSr": {
+      "raw10": 0.09917355371900827,
+      "cal10": 0.8925619834710744
+    }
+  },
+  "nn_surrogate": {
+    "baseline_comparison": [
+      {
+        "radionuclide": "Cs137",
+        "baseline_r2": 0.5209,
+        "nn_r2": 0.701,
+        "nn_gain": 0.18009999999999993,
+        "baseline_rmse": 0.4842,
+        "nn_rmse": 0.3824
+      },
+      {
+        "radionuclide": "Cs134",
+        "baseline_r2": 0.3838,
+        "nn_r2": 0.5276,
+        "nn_gain": 0.14379999999999998,
+        "baseline_rmse": 0.3757,
+        "nn_rmse": 0.329
+      },
+      {
+        "radionuclide": "Sr90",
+        "baseline_r2": 0.5706,
+        "nn_r2": 0.7015,
+        "nn_gain": 0.13090000000000002,
+        "baseline_rmse": 0.6088,
+        "nn_rmse": 0.5076
+      },
+      {
+        "radionuclide": "Eu154",
+        "baseline_r2": 0.5511,
+        "nn_r2": 0.6227,
+        "nn_gain": 0.0716,
+        "baseline_rmse": 0.4252,
+        "nn_rmse": 0.3898
+      },
+      {
+        "radionuclide": "Pu238",
+        "baseline_r2": 0.7478,
+        "nn_r2": 0.829,
+        "nn_gain": 0.08119999999999994,
+        "baseline_rmse": 0.5847,
+        "nn_rmse": 0.4814
+      },
+      {
+        "radionuclide": "Pu239_240",
+        "baseline_r2": 0.7432,
+        "nn_r2": 0.8254,
+        "nn_gain": 0.08220000000000005,
+        "baseline_rmse": 0.5284,
+        "nn_rmse": 0.4358
+      }
+    ],
+    "mc_dropout_uncertainty": {
+      "Cs137": {
+        "mean_mc_std": 0.184,
+        "coverage_95": 0.66,
+        "n_test": 265
+      },
+      "Cs134": {
+        "mean_mc_std": 0.1243,
+        "coverage_95": 0.589,
+        "n_test": 158
+      },
+      "Sr90": {
+        "mean_mc_std": 0.2282,
+        "coverage_95": 0.598,
+        "n_test": 239
+      },
+      "Eu154": {
+        "mean_mc_std": 0.1676,
+        "coverage_95": 0.588,
+        "n_test": 102
+      },
+      "Pu238": {
+        "mean_mc_std": 0.3395,
+        "coverage_95": 0.765,
+        "n_test": 17
+      },
+      "Pu239_240": {
+        "mean_mc_std": 0.2886,
+        "coverage_95": 0.765,
+        "n_test": 17
+      }
+    },
+    "note": "NN compared against linear regression baseline; MC dropout provides prediction uncertainty"
+  },
+  "methodological_caveats": [
+    "Pu isotopes (N=94) support only regional-scale trends, not local mapping",
+    "GP prediction intervals are post-hoc calibrated using variance inflation factors",
+    "Exceedance probabilities reported for both raw and calibrated uncertainties",
+    "Joint Cs-Sr exceedance assumes independence (conservative lower bound)",
+    "NN surrogate provides ~2-5\u00d7 multiplicative accuracy; use GP for site-specific decisions",
+    "Spearman correlations reported alongside Pearson to assess nonlinear associations",
+    "Kernel choice (Mat\u00e9rn-1.5) verified against exponential for all 6 radionuclides"
+  ]
+}

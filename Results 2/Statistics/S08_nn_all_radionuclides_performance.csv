@@ -1,0 +1,7 @@
+,n_train,n_test,r2_train,r2_test,rmse,mae,bias,bias_std,mult_factor,shapiro_W,shapiro_p,spearman_r,spearman_p,residuals_normal,architecture,dropout,n_params,best_epoch,total_epochs,stop_reason
+Cs137,1058,265,0.7122,0.701,0.3824,0.295,-0.0343,0.3809,2.41,0.9917,0.14232170873798805,0.86,8.292281497223429e-79,True,"trunk=[32, 16],head=8",0.35,1814,472,532,early stopping (60 epochs no improvement)
+Cs134,621,158,0.5926,0.5276,0.329,0.247,-0.0334,0.3273,2.13,0.9775,0.011018794710867386,0.7867,1.673039787543983e-34,False,"trunk=[32, 16],head=8",0.35,1814,472,532,early stopping (60 epochs no improvement)
+Sr90,947,239,0.7366,0.7015,0.5076,0.3896,-0.0344,0.5064,3.22,0.9851,0.013588531203583028,0.85,6.481170904642705e-68,False,"trunk=[32, 16],head=8",0.35,1814,472,532,early stopping (60 epochs no improvement)
+Eu154,400,102,0.6242,0.6227,0.3898,0.3028,-0.0198,0.3893,2.45,0.9886,0.5403125857680597,0.7777,7.093008234694327e-22,True,"trunk=[32, 16],head=8",0.35,1814,472,532,early stopping (60 epochs no improvement)
+Pu238,77,17,0.9309,0.829,0.4814,0.3774,-0.0132,0.4813,3.03,0.9526,0.49911189590272254,0.8873,2.048310776987618e-06,True,"trunk=[32, 16],head=8",0.35,1814,472,532,early stopping (60 epochs no improvement)
+Pu239_240,77,17,0.9285,0.8254,0.4358,0.3094,-0.0676,0.4305,2.73,0.9114,0.10561053022183142,0.8971,1.0662246540443243e-06,True,"trunk=[32, 16],head=8",0.35,1814,472,532,early stopping (60 epochs no improvement)
