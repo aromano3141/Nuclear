@@ -33,7 +33,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 from sklearn.experimental import enable_iterative_imputer
 from sklearn.impute import IterativeImputer, SimpleImputer
-from sklearn.linear_model import BayesianRidge
+from sklearn.linear_model import BayesianRidge, Ridge
+from sklearn.ensemble import RandomForestRegressor
 import warnings, json, copy, os
 from datetime import datetime
 from pathlib import Path
@@ -212,9 +213,24 @@ class DataPipeline:
         for col in ['CEC_Clay_Ratio', 'pH_OM_Interaction']:
             self.df[col] = self.df[col].fillna(self.df[col].median())
         
-        # 3. Categorical Encoding
-        self.le_dict = {col: LabelEncoder().fit(self.df[col].astype(str)) for col in self.cat_cols}
-        X_cat = np.column_stack([self.le_dict[col].transform(self.df[col].astype(str)) for col in self.cat_cols])
+        # 3. Categorical Encoding (Leakage-Free)
+        self.le_dict = {}
+        X_cat_list = []
+        for col in self.cat_cols:
+            le = LabelEncoder()
+            # Fit strictly on train
+            train_vals = self.df.iloc[tr_idx][col].astype(str)
+            le.fit(train_vals)
+            self.le_dict[col] = le
+            
+            # Handle unseen categories in the full dataset
+            # Map unseen to the most frequent class in train
+            most_freq = train_vals.mode()[0]
+            full_vals = self.df[col].astype(str).copy()
+            full_vals[~full_vals.isin(le.classes_)] = most_freq
+            X_cat_list.append(le.transform(full_vals))
+            
+        X_cat = np.column_stack(X_cat_list)
         
         # 4. Continuous Scaling (UPGRADE 2: RobustScaler fit on Train)
         cont_cols = [f'{col}_imputed' for col in self.numeric_soil_cols] + ['CEC_Clay_Ratio', 'pH_OM_Interaction']
@@ -257,6 +273,15 @@ class RobustPCA:
 # ============================================================================
 
 class MTL_CR_NN(nn.Module):
+    """
+    Isotope-Conditioned Shared-Representation Trunk Network.
+    
+    This architecture utilizes a shared trunk to learn universal soil-plant transfer 
+    representations, with specialized heads for different chemical families. 
+    Unlike traditional multi-label MTL, this network updates only the relevant 
+    family head for each sample row using a .gather() operation, effectively 
+    conditioning the prediction on the isotope's chemical group.
+    """
     def __init__(self, n_cont, cat_sizes, n_tasks=3, emb_dim=4):
         super().__init__()
         self.embs = nn.ModuleList([nn.Embedding(s, emb_dim) for s in cat_sizes])
@@ -301,6 +326,25 @@ def main():
     pipeline = DataPipeline('iaea-modaria-ii-tropical-dataset.csv')
     df = pipeline.load_and_preprocess()
     
+    # SECTION 0: PRE-IMPUTATION DIAGNOSTICS (UPGRADE: Sensitivity Check)
+    print(f"\n{'='*80}\nSECTION 0: PRE-IMPUTATION DIAGNOSTICS\n{'='*80}")
+    raw_soil_params = ['pH', 'OM', 'Clay', 'CEC']
+    raw_targets = ['Cs-137', 'Sr-90', 'Ra-226', 'K-40']
+    raw_stats = []
+    
+    for target in raw_targets:
+        for param in raw_soil_params:
+            sub = df[(df['Target'] == target) & (df[param].notna()) & (df['log_CR'].notna())]
+            if len(sub) > 5:
+                r_p, _ = pearsonr(sub[param], sub['log_CR'])
+                r_s, _ = spearmanr(sub[param], sub['log_CR'])
+                raw_stats.append({
+                    'Target': target, 'Param': param, 
+                    'Pearson_r': r_p, 'Spearman_r': r_s, 'N': len(sub)
+                })
+    pd.DataFrame(raw_stats).to_csv(STATS_DIR / 'S03_raw_soil_dependence_stats.csv', index=False)
+    print("  → S03_raw_soil_dependence_stats saved (Pre-Imputation)")
+
     # UPGRADE: Split BEFORE fit
     tr_idx, te_idx = pipeline.split_data()
     X_cont, X_cat, y_scaled = pipeline.process_features(tr_idx, te_idx)
@@ -336,6 +380,10 @@ def main():
     active_targets = pivot_df.notna().sum()[pivot_df.notna().sum() > 5].index.tolist()
     X_sparse = pivot_df[active_targets].values
     
+    # UPGRADE 3: Log Sparsity Metric
+    sparsity = pivot_df[active_targets].isna().mean().mean() * 100
+    print(f"  → X_sparse Matrix Sparsity: {sparsity:.1f}%")
+
     if X_sparse.shape[0] > 10:
         _, pca_model = RobustPCA.iterative_svd(X_sparse, n_components=min(6, len(active_targets)))
         ld_df = pd.DataFrame(pca_model.components_.T, index=active_targets, columns=[f'PC{i+1}' for i in range(pca_model.n_components_)])
@@ -462,8 +510,62 @@ def main():
     axes[1].set_title(f"MTL Prediction (Global R²={g_r2:.3f})")
     plt.tight_layout(); fig.savefig(MAIN_FIG_DIR / 'Fig4_NN_Results.png')
 
-    # SECTION 5: SUPPLEMENTARY FIGURES
-    print(f"\n{'='*80}\nSECTION 5: SUPPLEMENTARY FIGURES\n{'='*80}")
+    # SECTION 5: BASELINE BENCHMARKING (UPGRADE: Reviewer Request)
+    print(f"\n{'='*80}\nSECTION 5: BASELINE BENCHMARKING\n{'='*80}")
+    # Prepare flat features for baselines
+    X_base = np.column_stack([X_cont, X_cat])
+    X_tr_base, X_te_base = X_base[tr_idx], X_base[te_idx]
+    y_tr_base, y_te_base = y_scaled[tr_idx].flatten(), y_scaled[te_idx].flatten()
+    
+    # 1. Ridge Regression
+    ridge = Ridge(alpha=1.0)
+    ridge.fit(X_tr_base, y_tr_base)
+    ridge_preds_scaled = ridge.predict(X_te_base).reshape(-1, 1)
+    ridge_preds_cr = pipeline.target_transformer.inverse_transform(ridge_preds_scaled).flatten()
+    ridge_preds = np.log10(np.clip(ridge_preds_cr, 1e-10, None))
+    
+    # 2. Random Forest
+    rf = RandomForestRegressor(n_estimators=100, random_state=42)
+    rf.fit(X_tr_base, y_tr_base)
+    rf_preds_scaled = rf.predict(X_te_base).reshape(-1, 1)
+    rf_preds_cr = pipeline.target_transformer.inverse_transform(rf_preds_scaled).flatten()
+    rf_preds = np.log10(np.clip(rf_preds_cr, 1e-10, None))
+    
+    # Comparison Table
+    def get_metrics(a, p, families=None, current_fams=None):
+        res = {}
+        # Global
+        m = np.isfinite(a) & np.isfinite(p)
+        if m.sum() > 0:
+            res['Global'] = (r2_score(a[m], p[m]), np.sqrt(mean_squared_error(a[m], p[m])))
+        else:
+            res['Global'] = (0.0, 0.0)
+            
+        # Family-specific
+        if families is not None and current_fams is not None:
+            for i, fam in enumerate(families):
+                f_m = (current_fams == i) & m
+                if f_m.sum() > 5:
+                    res[fam] = (r2_score(a[f_m], p[f_m]), np.sqrt(mean_squared_error(a[f_m], p[f_m])))
+        return res
+
+    nn_metrics = get_metrics(actual, preds, pipeline.fam_list, te_fam.numpy())
+    ridge_metrics = get_metrics(actual, ridge_preds, pipeline.fam_list, te_fam.numpy())
+    rf_metrics = get_metrics(actual, rf_preds, pipeline.fam_list, te_fam.numpy())
+    
+    comp_data = []
+    for model_name, metrics_dict in zip(['Neural Network', 'Ridge Regression', 'Random Forest'], 
+                                       [nn_metrics, ridge_metrics, rf_metrics]):
+        for scope, (r2, rmse) in metrics_dict.items():
+            comp_data.append({'Model': model_name, 'Scope': scope, 'R2': r2, 'RMSE': rmse})
+    
+    comparison_df = pd.DataFrame(comp_data)
+    comparison_df.to_csv(STATS_DIR / 'nn_vs_baseline.csv', index=False)
+    print("  → nn_vs_baseline.csv saved")
+    print(comparison_df[comparison_df['Scope'] == 'Global'].to_string(index=False))
+
+    # SECTION 6: SUPPLEMENTARY FIGURES
+    print(f"\n{'='*80}\nSECTION 6: SUPPLEMENTARY FIGURES\n{'='*80}")
     
     # FigS1: Distributions
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -485,13 +587,12 @@ def main():
         'n_samples': len(df), 
         'global_performance': {'R2': g_r2, 'RMSE': g_rmse},
         'family_performance': fam_scores,
+        'X_sparse_sparsity': sparsity,
         'pft_distribution': df['PFT'].value_counts().to_dict(),
         'climate_distribution': df['Climate'].value_counts().to_dict(),
         'family_weights': dict(zip(pipeline.fam_list, weights.values.tolist()))
     }
     with open(STATS_DIR / 'S00_master_statistics.json', 'w') as f: json.dump(stats_data, f, indent=4)
-    # Also save as master_statistics.json for redundancy as seen in original tree
-    with open(STATS_DIR / 'master_statistics.json', 'w') as f: json.dump(stats_data, f, indent=4)
     print("\nANALYSIS COMPLETE.")
 
 if __name__ == "__main__": main()
