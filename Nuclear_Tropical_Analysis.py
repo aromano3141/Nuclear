@@ -1,19 +1,20 @@
 """
 ================================================================================
-IAEA MODARIA II TROPICAL DATASET ANALYSIS
+IAEA MODARIA II TROPICAL DATASET ANALYSIS - PRODUCTION GRADE
 ================================================================================
 
-Adapts methodology from Chernobyl/Nuclear scripts to analyze the Tropical 
-dataset. Focuses on soil-to-plant transfer factors (CR) and their 
-dependence on soil chemistry and plant characteristics.
+A production-grade refactoring of the Tropical Radioecological dataset analysis.
+Implements iterative imputation, robust missing-data PCA, advanced feature 
+engineering for botanical/climatic context, and a Multi-Task Learning (MTL) 
+Neural Network.
 
-Methods implemented:
-  1. Multivariate Correlation Analysis (Pearson + Spearman)
-  2. PCA of Concentration Ratios (CR)
-  3. Soil-Chemistry vs CR Dependence
-  4. Neural Network Surrogate for CR Prediction
-  5. Statistical Summary and Visualization
+Upgrades:
+  1. MICE-based Iterative Imputation for soil parameters.
+  2. Iterative SVD (EM-PCA) for robust multivariate analysis.
+  3. Expanded PFT (Plant Functional Type) and Macro-Climate mapping.
+  4. Multi-Task Learning (MTL) NN with 3 chemical family heads.
 
+Author: Senior Research Engineer (AI/Geostatistics)
 Output → ./Results_Tropical/
 ================================================================================
 """
@@ -25,12 +26,14 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy import stats
-from scipy.stats import pearsonr, spearmanr, shapiro, ks_2samp
+from scipy.stats import pearsonr, spearmanr
 from sklearn.preprocessing import StandardScaler, RobustScaler, LabelEncoder
 from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
-from sklearn.linear_model import LinearRegression
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.impute import IterativeImputer
+from sklearn.linear_model import BayesianRidge
 import warnings, json, copy, os
 from datetime import datetime
 from pathlib import Path
@@ -41,6 +44,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+# Reproducibility
 np.random.seed(42)
 torch.manual_seed(42)
 
@@ -52,7 +56,7 @@ plt.rcParams.update({
 })
 
 # ============================================================================
-# PATHS
+# CONFIGURATION & MAPPINGS
 # ============================================================================
 
 BASE_DIR = Path('.')
@@ -60,350 +64,302 @@ OUTPUT_DIR   = BASE_DIR / 'Results_Tropical'
 MAIN_FIG_DIR = OUTPUT_DIR / 'Main_Figures'
 SUPP_FIG_DIR = OUTPUT_DIR / 'Supplementary'
 STATS_DIR    = OUTPUT_DIR / 'Statistics'
-for d in [MAIN_FIG_DIR, SUPP_FIG_DIR, STATS_DIR]:
-    d.mkdir(parents=True, exist_ok=True)
 
-print("=" * 80)
-print("TROPICAL RADIONUCLIDE TRANSFER ANALYSIS")
-print("=" * 80)
-print(f"  Base dir  : {BASE_DIR.absolute()}")
-print(f"  Output    : {OUTPUT_DIR}")
-print(f"  Timestamp : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
-# ============================================================================
-# SECTION 1 — DATA LOADING & PREPROCESSING
-# ============================================================================
-
-print(f"\n{'='*80}")
-print("SECTION 1: DATA LOADING & PREPROCESSING")
-print(f"{'='*80}")
-
-csv_path = BASE_DIR / 'iaea-modaria-ii-tropical-dataset.csv'
-assert csv_path.exists(), f"Not found: {csv_path}"
-
-df_raw = pd.read_csv(csv_path)
-print(f"  Raw shape : {df_raw.shape}")
-
-# ---- safe numeric conversion ------------------------------------------------
-
-def safe_numeric(s):
-    if s.dtype == 'object':
-        s = s.astype(str).str.strip().str.replace(',', '.')
-    return pd.to_numeric(s, errors='coerce')
-
-# Clean columns
-numeric_cols = ['CR', 'C_plant', 'C_soil', 'pH', 'OM', 'Sand', 'Silt', 'Clay', 'CEC', 'Exch. K', 'Exch. Ca', 'Exch. Mg']
-for col in numeric_cols:
-    if col in df_raw.columns:
-        df_raw[col] = safe_numeric(df_raw[col])
-
-# Combine Radionuclide and Element for identification
-df_raw['Target'] = df_raw['Radionuclide'].fillna(df_raw['Element'])
-
-# Filter for relevant targets (those with enough data)
-counts = df_raw.groupby('Target')['CR'].count()
-TARGETS = counts[counts > 20].index.tolist()
-print(f"  Analysis Targets (N > 20): {TARGETS}")
-
-# Radionuclide Config for plotting (colors)
-palette = sns.color_palette("husl", len(TARGETS))
-RN_CFG = {t: {'c': palette[i]} for i, t in enumerate(TARGETS)}
-
-# Log-transform targets
-df = df_raw.copy()
-df['log_CR'] = np.log10(df['CR'].clip(lower=1e-10))
-
-# ============================================================================
-# SECTION 2 — MULTIVARIATE CORRELATIONS
-# ============================================================================
-
-print(f"\n{'='*80}")
-print("SECTION 2: MULTIVARIATE CORRELATIONS")
-print(f"{'='*80}")
-
-# Pivot to get multivariate view per record context
-# We use Site, Country, Common name, and Year as the 'station' equivalent
-id_cols = ['Country', 'Site', 'Common name', 'Year', 'Compartment']
-pivot_df = df.pivot_table(index=id_cols, columns='Target', values='log_CR')
-
-# Select targets present in pivot
-avail_targets = [t for t in TARGETS if t in pivot_df.columns]
-pivot_df = pivot_df[avail_targets]
-
-print(f"  Pivoted shape: {pivot_df.shape}")
-
-corr_pearson = pivot_df.corr(method='pearson')
-corr_spearman = pivot_df.corr(method='spearman')
-
-# Sample size matrix
-ns_mat = np.zeros((len(avail_targets), len(avail_targets)))
-for i, t1 in enumerate(avail_targets):
-    for j, t2 in enumerate(avail_targets):
-        ns_mat[i, j] = pivot_df[[t1, t2]].dropna().shape[0]
-
-# Save stats
-corr_pearson.to_csv(STATS_DIR / 'S01_corr_pearson.csv')
-corr_spearman.to_csv(STATS_DIR / 'S01_corr_spearman.csv')
-pd.DataFrame(ns_mat, index=avail_targets, columns=avail_targets).to_csv(STATS_DIR / 'S01_corr_sample_sizes.csv')
-
-# Plot correlations
-fig, axes = plt.subplots(1, 2, figsize=(18, 8))
-mask = np.triu(np.ones_like(corr_pearson, dtype=bool))
-
-sns.heatmap(corr_pearson, mask=mask, cmap='RdBu_r', center=0, annot=True, fmt=".2f", ax=axes[0], vmin=-1, vmax=1)
-axes[0].set_title('Pearson Correlation (log10 CR)', fontweight='bold')
-
-sns.heatmap(corr_spearman, mask=mask, cmap='RdBu_r', center=0, annot=True, fmt=".2f", ax=axes[1], vmin=-1, vmax=1)
-axes[1].set_title('Spearman Correlation (log10 CR)', fontweight='bold')
-
-plt.tight_layout()
-fig.savefig(MAIN_FIG_DIR / 'Fig1_Correlations.png')
-print("  → Fig1_Correlations saved")
-
-# ============================================================================
-# SECTION 3 — PCA OF CONCENTRATION RATIOS
-# ============================================================================
-
-print(f"\n{'='*80}")
-print("SECTION 3: PCA OF CONCENTRATION RATIOS")
-print(f"{'='*80}")
-
-# For PCA, we need sites with multiple targets.
-# Let's try to find the largest subset of targets and sites that form a dense matrix
-target_counts = pivot_df.notna().sum().sort_values(ascending=False)
-for n_top in [8, 6, 4]:
-    top_targets_pca = target_counts.head(n_top).index.tolist()
-    pca_data = pivot_df[top_targets_pca].dropna()
-    if pca_data.shape[0] > 15:
-        print(f"  Performing PCA on {n_top} targets with {pca_data.shape[0]} samples.")
-        break
-else:
-    pca_data = pd.DataFrame()
-
-if not pca_data.empty:
-    sc = StandardScaler()
-    pca = PCA()
-    scores = pca.fit_transform(sc.fit_transform(pca_data))
-    
-    ld_df = pd.DataFrame(pca.components_.T, index=pca_data.columns, columns=[f'PC{i+1}' for i in range(pca_data.shape[1])])
-    ld_df.to_csv(STATS_DIR / 'S02_pca_loadings.csv')
-    
-    # Plot PCA
-    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
-    
-    # Scree Plot
-    axes[0].bar(range(1, len(pca.explained_variance_ratio_) + 1), pca.explained_variance_ratio_ * 100, color='steelblue', alpha=0.7)
-    axes[0].plot(range(1, len(pca.explained_variance_ratio_) + 1), np.cumsum(pca.explained_variance_ratio_) * 100, 'ro-', label='Cumulative')
-    axes[0].set_title('Scree Plot', fontweight='bold')
-    axes[0].set_xlabel('Principal Component')
-    axes[0].set_ylabel('Variance Explained (%)')
-    axes[0].legend()
-    
-    # Biplot (Loadings)
-    sns.heatmap(ld_df.iloc[:, :min(4, ld_df.shape[1])], annot=True, cmap='RdBu_r', center=0, ax=axes[1])
-    axes[1].set_title('PCA Loadings', fontweight='bold')
-    
-    plt.tight_layout()
-    fig.savefig(MAIN_FIG_DIR / 'Fig2_PCA.png')
-    print("  → Fig2_PCA saved")
-else:
-    print("  ⚠ Insufficient overlapping data for any PCA subset")
-
-# ============================================================================
-# SECTION 4 — SOIL CHEMISTRY DEPENDENCE
-# ============================================================================
-
-print(f"\n{'='*80}")
-print("SECTION 4: SOIL CHEMISTRY DEPENDENCE")
-print(f"{'='*80}")
-
-soil_params = ['pH', 'OM', 'Clay', 'CEC']
-targets_to_plot = ['Cs-137', 'Sr-90', 'Ra-226', 'K-40']
-
-fig, axes = plt.subplots(len(targets_to_plot), len(soil_params), figsize=(20, 16))
-
-soil_stats = []
-
-for i, target in enumerate(targets_to_plot):
-    for j, param in enumerate(soil_params):
-        ax = axes[i, j]
-        sub = df[(df['Target'] == target) & (df[param].notna()) & (df['log_CR'].notna())]
-        if len(sub) > 10:
-            sns.regplot(x=param, y='log_CR', data=sub, ax=ax, scatter_kws={'alpha':0.3, 's':10}, line_kws={'color':'red'})
-            r, p = pearsonr(sub[param], sub['log_CR'])
-            ax.set_title(f"{target} vs {param}\nr={r:.2f}, p={p:.2g}", fontsize=10)
-            soil_stats.append({'Target': target, 'Param': param, 'r': r, 'p': p, 'N': len(sub)})
-        else:
-            ax.text(0.5, 0.5, 'Insufficient Data', ha='center', va='center')
-            ax.set_title(f"{target} vs {param}")
-
-plt.tight_layout()
-fig.savefig(MAIN_FIG_DIR / 'Fig3_Soil_Dependence.png')
-pd.DataFrame(soil_stats).to_csv(STATS_DIR / 'S03_soil_dependence_stats.csv', index=False)
-print("  → Fig3_Soil_Dependence saved")
-
-# ============================================================================
-# SECTION 5 — NEURAL NETWORK SURROGATE
-# ============================================================================
-
-print(f"\n{'='*80}")
-print("SECTION 5: NEURAL NETWORK SURROGATE")
-print(f"{'='*80}")
-
-# Predict log_CR using soil properties and plant compartment (categorical)
-feat_cols = ['pH', 'OM', 'Clay', 'Sand', 'Silt', 'CEC']
-# Drop rows where all features are NaN
-nn_data = df.dropna(subset=['log_CR'])
-# For features, we fill NaN with median to keep as much data as possible
-for col in feat_cols:
-    if col in nn_data.columns:
-        nn_data[col] = nn_data[col].fillna(nn_data[col].median())
-
-# Encoding categorical features
-le_target = LabelEncoder()
-nn_data['Target_Idx'] = le_target.fit_transform(nn_data['Target'])
-le_comp = LabelEncoder()
-nn_data['Comp_Idx'] = le_comp.fit_transform(nn_data['Compartment'].astype(str))
-
-X = nn_data[feat_cols + ['Target_Idx', 'Comp_Idx']].values
-y = nn_data['log_CR'].values
-
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-# Scale
-scaler_X = RobustScaler()
-X_tr = scaler_X.fit_transform(X_train)
-X_te = scaler_X.transform(X_test)
-
-y_mean, y_std = y_train.mean(), y_train.std()
-y_tr = (y_train - y_mean) / y_std
-y_te = (y_test - y_mean) / y_std
-
-# Tensors
-X_tr_t = torch.FloatTensor(X_tr)
-y_tr_t = torch.FloatTensor(y_tr).view(-1, 1)
-X_te_t = torch.FloatTensor(X_te)
-y_te_t = torch.FloatTensor(y_te).view(-1, 1)
-
-class CR_NN(nn.Module):
-    def __init__(self, n_in):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(n_in, 64),
-            nn.BatchNorm1d(64),
-            nn.GELU(),
-            nn.Dropout(0.2),
-            nn.Linear(64, 32),
-            nn.GELU(),
-            nn.Linear(32, 1)
-        )
-    def forward(self, x):
-        return self.net(x)
-
-model = CR_NN(X.shape[1])
-optimizer = optim.Adam(model.parameters(), lr=0.001)
-criterion = nn.MSELoss()
-
-train_losses = []
-test_losses = []
-
-print("  Training NN...")
-for epoch in range(300):
-    model.train()
-    optimizer.zero_grad()
-    outputs = model(X_tr_t)
-    loss = criterion(outputs, y_tr_t)
-    loss.backward()
-    optimizer.step()
-    train_losses.append(loss.item())
-    
-    model.eval()
-    with torch.no_grad():
-        te_loss = criterion(model(X_te_t), y_te_t)
-        test_losses.append(te_loss.item())
-
-# Evaluate
-model.eval()
-with torch.no_grad():
-    y_pred_te = model(X_te_t).numpy() * y_std + y_mean
-    y_true_te = y_test
-
-r2 = r2_score(y_true_te, y_pred_te)
-rmse = np.sqrt(mean_squared_error(y_true_te, y_pred_te))
-print(f"  NN Performance: R2 = {r2:.3f}, RMSE = {rmse:.3f}")
-
-# Plot results
-fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-axes[0].plot(train_losses, label='Train')
-axes[0].plot(test_losses, label='Test')
-axes[0].set_title('Loss Convergence')
-axes[0].legend()
-
-axes[1].scatter(y_true_te, y_pred_te, alpha=0.3)
-axes[1].plot([y_true_te.min(), y_true_te.max()], [y_true_te.min(), y_true_te.max()], 'r--')
-axes[1].set_title(f'Prediction vs Actual (R2={r2:.2f})')
-axes[1].set_xlabel('Actual log10(CR)')
-axes[1].set_ylabel('Predicted log10(CR)')
-
-plt.tight_layout()
-fig.savefig(MAIN_FIG_DIR / 'Fig4_NN_Results.png')
-print("  → Fig4_NN_Results saved")
-
-# ============================================================================
-# SECTION 6 — SUPPLEMENTARY: DISTRIBUTIONS AND COUNTRY ANALYSIS
-# ============================================================================
-
-print(f"\n{'='*80}")
-print("SECTION 6: SUPPLEMENTARY ANALYSIS")
-print(f"{'='*80}")
-
-# Distribution of log_CR for top radionuclides
-fig, axes = plt.subplots(2, 3, figsize=(18, 10))
-top_rn = ['Cs-137', 'Sr-90', 'Ra-226', 'K-40', 'Th-232', 'U-238']
-for i, rn in enumerate(top_rn):
-    ax = axes[i//3, i%3]
-    data = df[df['Target'] == rn]['log_CR'].dropna()
-    if len(data) > 0:
-        sns.histplot(data, kde=True, ax=ax, color=RN_CFG.get(rn, {'c':'blue'})['c'])
-        ax.set_title(f'{rn} log10(CR) Distribution (N={len(data)})', fontweight='bold')
-    else:
-        ax.text(0.5, 0.5, 'No Data', ha='center', va='center')
-
-plt.tight_layout()
-fig.savefig(SUPP_FIG_DIR / 'FigS1_Distributions.png')
-print("  → FigS1_Distributions saved")
-
-# Country-level Boxplot for Cs-137
-fig, ax = plt.subplots(figsize=(14, 7))
-cs137_data = df[df['Target'] == 'Cs-137']
-if len(cs137_data) > 0:
-    sns.boxplot(x='Country', y='log_CR', data=cs137_data, ax=ax, palette='Set3')
-    ax.set_title('Cs-137 log10(CR) by Country', fontweight='bold')
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    fig.savefig(SUPP_FIG_DIR / 'FigS2_Country_Comparison.png')
-    print("  → FigS2_Country_Comparison saved")
-
-# ============================================================================
-# SECTION 7 — MASTER STATISTICS
-# ============================================================================
-
-print(f"\n{'='*80}")
-print("SECTION 7: MASTER STATISTICS")
-print(f"{'='*80}")
-
-master_stats = {
-    'total_records': len(df),
-    'targets': TARGETS,
-    'nn_performance': {'r2': r2, 'rmse': rmse},
-    'data_availability': df.groupby('Target')['CR'].count().to_dict(),
-    'pca_subset': top_targets_pca if not pca_data.empty else None
+# UPGRADE 3: Expanded PFT Mapping
+PFT_MAP = {
+    # Cereal Grains & Grasses
+    'Rice': 'Cereal Grains', 'Maize': 'Cereal Grains', 'Corn': 'Cereal Grains', 'Millet': 'Cereal Grains',
+    'Sorghum': 'Cereal Grains', 'Wheat': 'Cereal Grains', 'Paddy grass': 'Cereal Grains', 'Sedge grass': 'Cereal Grains',
+    'Jasmine rice': 'Cereal Grains',
+    # Root/Tuber Crops
+    'Yam': 'Root/Tuber Crops', 'Cassava': 'Root/Tuber Crops', 'Potato': 'Root/Tuber Crops', 
+    'Round yam': 'Root/Tuber Crops', 'Sweet potato': 'Root/Tuber Crops', 'Taro': 'Root/Tuber Crops',
+    'Greater galangal': 'Root/Tuber Crops', 'Bush carrot': 'Root/Tuber Crops', 'Radish': 'Root/Tuber Crops',
+    'Arum': 'Root/Tuber Crops', 'Cocoyam': 'Root/Tuber Crops', 'Long yam': 'Root/Tuber Crops',
+    # Leafy Vegetables
+    'Lettuce': 'Leafy Vegetables', 'Cabbage': 'Leafy Vegetables', 'Waterleaf': 'Leafy Vegetables', 
+    'Spinach': 'Leafy Vegetables', 'Amaranth': 'Leafy Vegetables', 'Red spinach': 'Leafy Vegetables',
+    'Red amaranth': 'Leafy Vegetables', 'Pui shak': 'Leafy Vegetables', 'Helencha': 'Leafy Vegetables',
+    # Fruit Vegetables
+    'Cucumber': 'Fruit Vegetables', 'Tomato': 'Fruit Vegetables', 'Eggplant': 'Fruit Vegetables',
+    'Brinjal': 'Fruit Vegetables', "Ladies' fingers": 'Fruit Vegetables', 'Pumpkin': 'Fruit Vegetables',
+    # Tree Fruits
+    'Cacao': 'Tree Fruits', 'Cocoa': 'Tree Fruits', 'Passionfruit': 'Tree Fruits', 'Pawpaw': 'Tree Fruits', 
+    'Papaya': 'Tree Fruits', 'Mango': 'Tree Fruits', 'Banana': 'Tree Fruits', 
+    'Orange': 'Tree Fruits', 'Coconut': 'Tree Fruits', 'Kakadu plum': 'Tree Fruits',
+    'Bush apple': 'Tree Fruits', 'Bush plum (green)': 'Tree Fruits', 'Bush plum (black)': 'Tree Fruits',
+    'Noni': 'Tree Fruits', 'Cluster fig': 'Tree Fruits', 'Bush fig': 'Tree Fruits',
+    'Sand palm': 'Tree Fruits', 'Gooseberry': 'Tree Fruits', 'White currant': 'Tree Fruits',
+    'Black currant': 'Tree Fruits', 'Pineapple': 'Tree Fruits', 'Mandarin': 'Tree Fruits', 'Lemon': 'Tree Fruits',
+    # Woody Perennials & Shrubs
+    'Teak': 'Woody Perennials', 'Acacia': 'Woody Perennials', 'Rubber': 'Woody Perennials', 'Tea': 'Woody Perennials',
+    # Legumes
+    'Bean': 'Legumes', 'Lentil': 'Legumes'
 }
 
-with open(STATS_DIR / 'master_statistics.json', 'w') as f:
-    json.dump(master_stats, f, indent=4)
+# UPGRADE 3: Regional Macro-Climate Proxy
+CLIMATE_MAP = {
+    'Nigeria': 'Humid Tropical', 'Ghana': 'Humid Tropical', 'Malaysia': 'Humid Tropical', 
+    'Thailand': 'Humid Tropical', 'Vietnam': 'Humid Tropical', 'Benin': 'Humid Tropical', 
+    'Cameroon': 'Humid Tropical', 'Tanzania': 'Humid Tropical', 'Indonesia': 'Humid Tropical', 
+    'Sri Lanka': 'Humid Tropical', 'French Polynesia': 'Humid Tropical', 'Philippines': 'Humid Tropical',
+    'India': 'Seasonally Dry Tropical', 'Brazil': 'Seasonally Dry Tropical', 
+    'Australia': 'Arid Tropical', 'Marshall Islands': 'Humid Tropical', 
+    'Cuba': 'Humid Tropical', 'Honduras': 'Humid Tropical', 'Ecuador': 'Humid Tropical', 
+    'Peru': 'Humid Tropical', 'Bangladesh': 'Humid Tropical'
+}
 
-print(f"\n{'='*80}")
-print("ANALYSIS COMPLETE")
-print(f"  Results saved to {OUTPUT_DIR}")
-print(f"{'='*80}")
+# UPGRADE 4: Chemical Families
+CHEMICAL_FAMILIES = {
+    'Alkali': ['Cs-134', 'Cs-137', 'Sr-85', 'Sr-90', 'K-40'],
+    'Metals': ['Pb', 'Cd', 'As', 'Cu', 'Zn', 'Cr', 'Ni', 'Co', 'Mn', 'Fe', 'Zn-65', 'Co-60', 'Sb', 'Se', 'Hg', 'Na', 'P', 'Rb', 'V', 'Sm', 'Sc', 'La', 'Ba'],
+    'Actinides': ['U-238', 'Th-232', 'Ra-226', 'Ra-228', 'Pb-210', 'U-234', 'Th-230', 'Th-228', 'Po-210', 'Pu-239,240', 'Am-241']
+}
+
+TARGET_TO_FAMILY = {t: f for f, ts in CHEMICAL_FAMILIES.items() for t in ts}
+
+# ============================================================================
+# DATA PIPELINE CLASS
+# ============================================================================
+
+class DataPipeline:
+    def __init__(self, csv_path):
+        self.csv_path = csv_path
+        self.df = None
+        self.imputer = IterativeImputer(estimator=BayesianRidge(), max_iter=20, random_state=42)
+        self.numeric_soil_cols = ['pH', 'OM', 'Clay', 'Sand', 'Silt', 'CEC']
+        self.cat_cols = ['PFT', 'Climate', 'Compartment']
+        self.le_dict = {}
+
+    def load_and_preprocess(self):
+        print(f"  Loading data from {self.csv_path}...")
+        df_raw = pd.read_csv(self.csv_path)
+        
+        def safe_numeric(s):
+            if s.dtype == 'object':
+                s = s.astype(str).str.strip().str.replace(',', '.')
+            return pd.to_numeric(s, errors='coerce')
+
+        for col in self.numeric_soil_cols + ['CR']:
+            df_raw[col] = safe_numeric(df_raw[col])
+
+        df_raw['Target'] = df_raw['Radionuclide'].fillna(df_raw['Element'])
+        df = df_raw.dropna(subset=['CR']).copy()
+        df['log_CR'] = np.log10(df['CR'].clip(lower=1e-10))
+        
+        # UPGRADE 3: Feature Engineering
+        df['PFT'] = df['Common name'].map(PFT_MAP).fillna('Other')
+        df['Climate'] = df['Country'].map(CLIMATE_MAP).fillna('Other')
+        
+        self.df = df
+        return df
+
+    def run_imputation(self):
+        print("  Running Iterative Imputation (MICE)...")
+        soil_data = self.df[self.numeric_soil_cols].copy()
+        imputed = self.imputer.fit_transform(soil_data)
+        df_imputed = pd.DataFrame(imputed, columns=self.numeric_soil_cols, index=self.df.index)
+
+        # Constraints
+        df_imputed['pH'] = df_imputed['pH'].clip(0, 14)
+        for col in ['OM', 'Clay', 'Sand', 'Silt', 'CEC']:
+            df_imputed[col] = df_imputed[col].clip(lower=0)
+
+        # Texture normalization
+        texture_sum = df_imputed[['Sand', 'Silt', 'Clay']].sum(axis=1)
+        mask = texture_sum > 0
+        df_imputed.loc[mask, ['Sand', 'Silt', 'Clay']] = df_imputed.loc[mask, ['Sand', 'Silt', 'Clay']].div(texture_sum[mask], axis=0) * 100
+
+        for col in self.numeric_soil_cols:
+            self.df[f'{col}_imputed'] = df_imputed[col]
+        
+        return df_imputed
+
+    def get_mtl_features(self):
+        FAMILIES = ['Alkali', 'Metals', 'Actinides']
+        FAMILY_TO_IDX = {f: i for i, f in enumerate(FAMILIES)}
+        
+        self.le_dict = {col: LabelEncoder().fit(self.df[col].astype(str)) for col in self.cat_cols}
+        
+        X_cont = self.df[[f'{col}_imputed' for col in self.numeric_soil_cols]].values
+        X_cat = np.column_stack([self.le_dict[col].transform(self.df[col].astype(str)) for col in self.cat_cols])
+        
+        self.df['Family'] = self.df['Target'].map(TARGET_TO_FAMILY).fillna('Metals')
+        self.df['Family_Idx'] = self.df['Family'].map(FAMILY_TO_IDX)
+        
+        self.scaler_y = StandardScaler()
+        self.df['log_CR_scaled'] = self.scaler_y.fit_transform(self.df[['log_CR']])
+        
+        return X_cont, X_cat, FAMILIES
+
+# ============================================================================
+# ROBUST PCA CLASS
+# ============================================================================
+
+class RobustPCA:
+    @staticmethod
+    def iterative_svd(X, n_components=5, max_iter=100, tol=1e-4):
+        X_filled = np.where(np.isnan(X), np.nanmean(X, axis=0), X)
+        prev_X = X_filled.copy()
+        
+        for i in range(max_iter):
+            pca = PCA(n_components=n_components)
+            X_pca = pca.fit_transform(X_filled)
+            X_reconstructed = pca.inverse_transform(X_pca)
+            X_filled[np.isnan(X)] = X_reconstructed[np.isnan(X)]
+            
+            diff = np.linalg.norm(X_filled - prev_X) / np.linalg.norm(prev_X)
+            if diff < tol: break
+            prev_X = X_filled.copy()
+        return X_filled, pca
+
+# ============================================================================
+# MTL NEURAL NETWORK CLASS
+# ============================================================================
+
+class MTL_CR_NN(nn.Module):
+    def __init__(self, n_cont, cat_sizes, n_tasks=3, emb_dim=4):
+        super().__init__()
+        self.embs = nn.ModuleList([nn.Embedding(s, emb_dim) for s in cat_sizes])
+        total_in = n_cont + len(cat_sizes) * emb_dim
+        self.shared = nn.Sequential(
+            nn.Linear(total_in, 128), nn.BatchNorm1d(128), nn.GELU(), nn.Dropout(0.2),
+            nn.Linear(128, 64), nn.GELU()
+        )
+        self.heads = nn.ModuleList([
+            nn.Sequential(nn.Linear(64, 32), nn.GELU(), nn.Linear(32, 1))
+            for _ in range(n_tasks)
+        ])
+        
+    def forward(self, x_cont, x_cat):
+        embeddings = [emb(x_cat[:, i]) for i, emb in enumerate(self.embs)]
+        x = torch.cat([x_cont] + embeddings, dim=1)
+        shared_out = self.shared(x)
+        return torch.cat([head(shared_out) for head in self.heads], dim=1)
+
+# ============================================================================
+# MAIN EXECUTION
+# ============================================================================
+
+def main():
+    print("=" * 80)
+    print("TROPICAL RADIONUCLIDE TRANSFER ANALYSIS - PRODUCTION GRADE")
+    print("=" * 80)
+
+    for d in [MAIN_FIG_DIR, SUPP_FIG_DIR, STATS_DIR]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    pipeline = DataPipeline('iaea-modaria-ii-tropical-dataset.csv')
+    df = pipeline.load_and_preprocess()
+    df_imputed = pipeline.run_imputation()
+
+    # SECTION 2: ROBUST PCA
+    print(f"\n{'='*80}\nSECTION 2: ROBUST PCA\n{'='*80}")
+    pivot_df = df.pivot_table(index=['Country', 'Site', 'Common name', 'Year'], columns='Target', values='log_CR')
+    active_targets = pivot_df.notna().sum()[pivot_df.notna().sum() > 5].index.tolist()
+    X_sparse = pivot_df[active_targets].values
+    
+    if X_sparse.shape[0] > 10:
+        _, pca_model = RobustPCA.iterative_svd(X_sparse, n_components=min(6, len(active_targets)))
+        ld_df = pd.DataFrame(pca_model.components_.T, index=active_targets, columns=[f'PC{i+1}' for i in range(pca_model.n_components_)])
+        ld_df.to_csv(STATS_DIR / 'S04_robust_pca_loadings.csv')
+        
+        fig, ax = plt.subplots(figsize=(12, 10))
+        sns.heatmap(ld_df, annot=True, cmap='RdBu_r', center=0, ax=ax)
+        ax.set_title('Robust PCA Loadings (Iterative SVD)', fontweight='bold')
+        plt.tight_layout()
+        fig.savefig(MAIN_FIG_DIR / 'Fig2_PCA.png')
+        print("  → Fig2_PCA saved")
+
+    # SECTION 3: SOIL DEPENDENCE (UPGRADE: Using Imputed Data)
+    print(f"\n{'='*80}\nSECTION 3: SOIL CHEMISTRY DEPENDENCE\n{'='*80}")
+    soil_params = ['pH_imputed', 'OM_imputed', 'Clay_imputed', 'CEC_imputed']
+    targets_to_plot = ['Cs-137', 'Sr-90', 'Ra-226', 'K-40']
+    fig, axes = plt.subplots(len(targets_to_plot), len(soil_params), figsize=(20, 16))
+    for i, target in enumerate(targets_to_plot):
+        for j, param in enumerate(soil_params):
+            ax = axes[i, j]
+            sub = df[(df['Target'] == target) & (df['log_CR'].notna())]
+            if len(sub) > 10:
+                sns.regplot(x=param, y='log_CR', data=sub, ax=ax, scatter_kws={'alpha':0.2}, line_kws={'color':'red'})
+                r, p = pearsonr(sub[param], sub['log_CR'])
+                ax.set_title(f"{target} vs {param}\nr={r:.2f}, p={p:.2g}", fontsize=10)
+    plt.tight_layout()
+    fig.savefig(MAIN_FIG_DIR / 'Fig3_Soil_Dependence.png')
+    print("  → Fig3_Soil_Dependence saved")
+
+    # SECTION 4: MTL NEURAL NETWORK
+    print(f"\n{'='*80}\nSECTION 4: MULTI-TASK LEARNING\n{'='*80}")
+    X_cont, X_cat, FAMILIES = pipeline.get_mtl_features()
+    
+    indices = np.arange(len(df))
+    tr_idx, te_idx = train_test_split(indices, test_size=0.2, random_state=42)
+    
+    def to_t(idx):
+        return (torch.FloatTensor(X_cont[idx]), torch.LongTensor(X_cat[idx]), 
+                torch.FloatTensor(df.iloc[idx]['log_CR_scaled'].values).view(-1, 1),
+                torch.LongTensor(df.iloc[idx]['Family_Idx'].values))
+
+    tr_x_cont, tr_x_cat, tr_y, tr_fam = to_t(tr_idx)
+    te_x_cont, te_x_cat, te_y, te_fam = to_t(te_idx)
+
+    model = MTL_CR_NN(X_cont.shape[1], [len(pipeline.le_dict[c].classes_) for c in pipeline.cat_cols])
+    optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-3)
+    criterion = nn.MSELoss(reduction='none')
+
+    train_losses, test_losses = [], []
+    for epoch in range(600):
+        model.train(); optimizer.zero_grad()
+        out = model(tr_x_cont, tr_x_cat)
+        loss = criterion(out.gather(1, tr_fam.view(-1, 1)), tr_y).mean()
+        loss.backward(); optimizer.step()
+        train_losses.append(loss.item())
+        
+        model.eval()
+        with torch.no_grad():
+            te_out = model(te_x_cont, te_x_cat)
+            te_loss = criterion(te_out.gather(1, te_fam.view(-1, 1)), te_y).mean()
+            test_losses.append(te_loss.item())
+        if (epoch+1)%100 == 0: print(f"    Epoch {epoch+1:3d} | Loss: {loss.item():.4f} | Val: {te_loss.item():.4f}")
+
+    # Evaluation
+    model.eval()
+    with torch.no_grad():
+        preds_scaled = model(te_x_cont, te_x_cat).gather(1, te_fam.view(-1, 1)).numpy()
+        preds = pipeline.scaler_y.inverse_transform(preds_scaled).flatten()
+        actual = df.iloc[te_idx]['log_CR'].values
+    
+    g_r2, g_rmse = r2_score(actual, preds), np.sqrt(mean_squared_error(actual, preds))
+    print(f"\n  MTL Performance: R2 = {g_r2:.3f}, RMSE = {g_rmse:.3f}")
+
+    # Family-specific scores
+    fam_scores = {}
+    for i, fam in enumerate(FAMILIES):
+        mask = (te_fam.numpy() == i)
+        if mask.sum() > 5:
+            r2_f = r2_score(actual[mask], preds[mask])
+            rmse_f = np.sqrt(mean_squared_error(actual[mask], preds[mask]))
+            fam_scores[fam] = {'R2': r2_f, 'RMSE': rmse_f, 'N': int(mask.sum())}
+            print(f"    {fam:<10}: R2 = {r2_f:.3f}, RMSE = {rmse_f:.3f}")
+
+    # Final Plots
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    axes[0].plot(train_losses, label='Train'); axes[0].plot(test_losses, label='Val'); axes[0].legend()
+    
+    sns.scatterplot(x=actual, y=preds, hue=[FAMILIES[i] for i in te_fam.numpy()], alpha=0.5, ax=axes[1])
+    axes[1].plot([actual.min(), actual.max()], [actual.min(), actual.max()], 'r--')
+    axes[1].set_title(f"MTL Prediction (Global R²={g_r2:.3f})")
+    plt.tight_layout(); fig.savefig(MAIN_FIG_DIR / 'Fig4_NN_Results.png')
+
+    # Statistics Export
+    stats_data = {
+        'n_samples': len(df), 
+        'global_performance': {'R2': g_r2, 'RMSE': g_rmse},
+        'family_performance': fam_scores,
+        'pft_distribution': df['PFT'].value_counts().to_dict(),
+        'climate_distribution': df['Climate'].value_counts().to_dict()
+    }
+    with open(STATS_DIR / 'S00_master_statistics.json', 'w') as f: json.dump(stats_data, f, indent=4)
+    print("\nANALYSIS COMPLETE.")
+
+if __name__ == "__main__": main()

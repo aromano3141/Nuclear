@@ -1,0 +1,39 @@
+{
+    "n_samples": 2335,
+    "global_performance": {
+        "R2": 0.4896544439341256,
+        "RMSE": 0.7064460424938868
+    },
+    "family_performance": {
+        "Alkali": {
+            "R2": 0.37506438282546894,
+            "RMSE": 0.7245170561546989,
+            "N": 183
+        },
+        "Metals": {
+            "R2": 0.4151628923614594,
+            "RMSE": 0.7302663991211115,
+            "N": 127
+        },
+        "Actinides": {
+            "R2": 0.3590442008584196,
+            "RMSE": 0.6642598191189769,
+            "N": 157
+        }
+    },
+    "pft_distribution": {
+        "Other": 746,
+        "Cereal Grains": 601,
+        "Root/Tuber Crops": 358,
+        "Leafy Vegetables": 235,
+        "Tree Fruits": 178,
+        "Fruit Vegetables": 153,
+        "Woody Perennials": 39,
+        "Legumes": 25
+    },
+    "climate_distribution": {
+        "Humid Tropical": 1749,
+        "Seasonally Dry Tropical": 565,
+        "Arid Tropical": 21
+    }
+}
