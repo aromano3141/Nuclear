@@ -1,44 +1,61 @@
-Act as an expert Research Engineer in AI and Geostatistics. I need you to refactor an environmental machine learning pipeline analyzing the IAEA MODARIA II tropical radionuclide dataset. A journal reviewer has requested a major revision based on specific architectural, validation, and geostatistical bottlenecks. 
+Act as an expert Senior Research Engineer in Tabular Machine Learning, Geostatistics, and Explainable AI (XAI). You are tasked with completely rewriting `Nuclear_Tropical_Analysis.py` to transform it into a publication-ready comparative benchmarking study. 
 
-Below is the exact code to modify, followed by the specific structural upgrades you must implement. 
+Given that tree-based architectures vastly outperform deep learning on this sparse environmental dataset (Random Forest achieves an R² of ~0.591 while the Neural Network collapses to -0.334), you will completely strip out the PyTorch multi-task neural network architecture. In its place, you will construct a highly rigorous, robustly validated Tree Ensemble pipeline (Random Forest, XGBoost, and LightGBM) integrated with SHAP interpretability and spatial validation.
 
-=========================================
-CURRENT CODEBASE (Nuclear_Tropical_Analysis.py)
+Maintain historical paths (`./Results_Tropical/`), use random seed `42` across all models for strict reproducibility, and implement the precise structural requirements outlined below.
 
-=========================================
-REQUIRED REFACTORING TASKS
-=========================================
+================================================================================
+CORE ARCHITECTURAL & METHODOLOGICAL REFACTORING
+================================================================================
 
-1. IMPLEMENT BASELINE BENCHMARKING MODELS
-- To justify using a Deep Learning network, you must bench it against standard baseline models.
-- In main(), after splitting data, train a Baseline Ridge Regression model and a Baseline Random Forest Regressor (or XGBoost) using the same continuous and encoded categorical features.
-- Evaluate these baseline models on the test set (inverse-transforming targets just like the neural network evaluation).
-- Calculate global and family-specific R² and RMSE scores for these baselines.
-- Export a comprehensive model comparison to './Results_Tropical/Statistics/nn_vs_baseline.csv' detailing performance across the Neural Network, Ridge, and Random Forest models.
+1. RESOLVE ISOTOPE BLINDNESS & RESTRUCTURE FEATURE SPACE
+- Context: The previous model lacked the direct identity of the radionuclide/element being predicted, forcing identical predictions for vastly different isotopes within the same family.
+- Requirements:
+  a. Move 'Target' into `self.cat_cols` within the `DataPipeline` class so it is explicitly processed as an input feature.
+  b. For models requiring numeric feature arrays (like Random Forest and XGBoost), use a unified `OneHotEncoder` or a clean `LabelEncoder` fallback strategy. For LightGBM, explicitly cast categorical string features to the `category` pandas dtype to leverage its optimized native categorical splits.
 
-2. ADD IMPUTATION SENSITIVITY CHECK DIAGNOSTICS
-- The reviewer is concerned that the global MICE (IterativeImputer) may be injecting artificial covariance structures into small isotope subsets (e.g., Sr-90 vs K-40).
-- Before conducting soil parameter imputation, calculate the raw, unimputed Pearson and Spearman correlation matrices for the targets plotted in Section 3 (Cs-137, Sr-90, Ra-226, K-40) against the raw soil parameters ('pH', 'OM', 'Clay', 'CEC').
-- Export these raw correlations along with their exact sample sizes (N) into a new diagnostic file: './Results_Tropical/Statistics/S03_raw_soil_dependence_stats.csv'.
-- This allows a reviewer to directly compare the pre-imputation vs. post-imputation correlation trends to verify that MICE did not fabricate linear relationships.
+2. ELIMINATE COVARIANCE FABRICATION FROM GLOBAL MICE IMPUTATION
+- Context: Global linear MICE imputation creates severe artifacts, inventing spurious soil-isotope correlations and flipping signs (e.g., Cs-137 vs Organic Matter).
+- Requirements:
+  a. Remove `IterativeImputer` entirely.
+  b. Implement an Isotope-Stratified Median Imputation strategy within `process_features`. Group the soil data strictly by the `Target` feature. Compute the median value for each soil parameter within each specific isotope group using ONLY the training fold data.
+  c. Apply these isotope-specific medians to fill missing values in both the training and testing segments. If a specific isotope group is completely missing a feature in the training partition, apply the global training median as a secure baseline fallback.
+  d. Ensure LightGBM is evaluated twice: once on this imputed feature matrix, and once on the raw, unimputed data to scientifically test whether native missing-data tree split algorithms outperform explicit imputation.
 
-3. LOG SPARSITY METRIC FOR ROBUST PCA
-- In Section 2, before executing 'RobustPCA.iterative_svd(X_sparse)', compute the exact sparsity (percentage of missing/NaN entries) of the 'X_sparse' matrix.
-- Print this percentage to the terminal during execution (e.g., "  → X_sparse Matrix Sparsity: XX.X%") and append this scalar metric to the final master statistics dictionary saved under 'stats_data'.
+3. ELEVATE VALIDATION RIGOR: GEOGRAPHIC GROUP K-FOLD CROSS-VALIDATION
+- Context: Random train/test splits lead to data leakage if samples from identical geographic coordinates or sites populate both folds, artificially inflating model performance.
+- Requirements:
+  a. Replace `train_test_split` with a rigorous `GroupKFold` cross-validation strategy using `5` splits.
+  b. Define the grouping key as the geographic proxy column: `df['Country']` (or `df['Site']` if country-level splits create massive, unmanageable class imbalances). 
+  c. Train, cross-validate, and evaluate all models out-of-fold. Proving the model can accurately predict radionuclide transfer vectors in a completely unseen geographic territory is a core requirement for high-tier environmental journals.
 
-4. ELIMINATE CATEGORICAL DATA LEAKAGE
-- In 'DataPipeline.process_features', the LabelEncoder is currently globally fit on the entire dataframe: 'LabelEncoder().fit(self.df[col].astype(str))'. This introduces subtle data leakage.
-- Refactor this to fit the LabelEncoder strictly on the training indices 'tr_idx'. 
-- To handle potential unseen categories in the test set, implement a robust fallback strategy (e.g., mapping unseen categories to an 'Unknown' token or forcing them to the most frequent class) before running '.transform()' on 'te_idx'.
+4. IMPLEMENT THE ENSEMBLE BENCHMARKING SUITE
+- Requirements: Build a unified training, cross-validation, and hyperparameter configuration engine for three production-grade architectures:
+  a. **Random Forest Regressor** (Scikit-Learn): Tune with `n_estimators=150`, `max_depth=12`, and `min_samples_leaf=4`.
+  b. **XGBoost Regressor** (`xgboost`): Configure using the modern hist-based algorithm (`tree_method='hist'`), `n_estimators=200`, `learning_rate=0.05`, and `max_depth=6`.
+  c. **LightGBM Regressor** (`lightgbm`): Configure with `n_estimators=200`, `learning_rate=0.05`, `num_leaves=31`. Run this model natively on the unimputed dataset to serve as a baseline comparison against the imputed tree runs.
 
-5. ARCHITECTURAL TRANSPARENCY & CLARIFICATION
-- Because each sample row contains a single target element family index, the network utilizes a '.gather()' layer during training, updating only one head's loss path at a time per sample.
-- Add descriptive code comments inside 'MTL_CR_NN' and the training loop clarifying that this setup operates technically as an "Isotope-Conditioned Shared-Representation Trunk Network" rather than traditional simultaneous multi-label Multi-Task Learning. 
+5. INTEGRATE EXPLAINABLE AI (XAI) VIA SHAP VALUES
+- Context: Journals reject pure black-box models. Adding SHAP values translates predictive scores into verifiable, biogeochemical rules.
+- Requirements:
+  a. Install/import `shap`. Once the top-performing model is identified across the cross-validation rounds, instantiate a `TreeExplainer` on that model using the validation split feature space.
+  b. Compute the global SHAP values for all core soil attributes (`pH`, `OM`, `Clay`, `CEC`) along with plant characteristics (`PFT`).
+  c. Generate and save a crisp SHAP beeswarm plot to `MAIN_FIG_DIR / 'Fig5_SHAP_Summary.png'` showing comprehensive feature impacts.
+  d. Export an automated text file to `STATS_DIR / 'SHAP_feature_rankings.txt'` listing features ranked by mean absolute SHAP value.
 
-6. CODE CLEANUP
-- Remove the redundant code block at the end of the script that writes the exact same 'stats_data' dictionary out twice to two separate filenames in the same directory. Keep only the write to 'S00_master_statistics.json'.
+================================================================================
+STATISTICAL EXPORTS & GRAPHICAL PIPELINE
+================================================================================
+- **Metrics Harmonization:** Evaluate all out-of-fold predictions on the original log-scale (reversing any Yeo-Johnson transforms via `target_transformer.inverse_transform` to maintain parity).
+- **Comprehensive Summary File:** Export a structured, comprehensive metrics breakdown to `STATS_DIR / 'ensemble_vs_baseline_comparison.csv'`. This table must track:
+  * Model Name | Scope (Global, Alkali, Metals, Actinides) | R² | RMSE | MAE | Sample Size (N)
+- **Plots Generation:** Update the plotting scripts to output:
+  * `Fig1_Correlations.png`: Pre-imputation Spearman correlation heatmap.
+  * `Fig2_PCA.png`: Robust PCA loading patterns.
+  * `Fig3_Soil_Dependence.png`: Raw bivariate regression lines for key target elements.
+  * `Fig4_Ensemble_Performance.png`: Scatter plots showing Predicted vs. Actual values for the best ensemble architecture across each chemical family.
 
-=========================================
-OUTPUT REQUIREMENT
-=========================================
-Please provide the fully updated, self-contained Python script. Ensure all matplotlib figure saves, directory paths, and random seeds remain identical to preserve historical continuity where applicable.
+================================================================================
+CODE SANITY CHECK
+================================================================================
+Provide the complete, self-contained Python script. Do not use code truncation, pseudocode placeholders, or missing block comments. Ensure all scikit-learn, xgboost, lightgbm, and shap imports are explicitly handled at the top of the file, and that the code handles edge cases where an entire geographic fold contains zero instances of rare Actinide elements gracefully without crashing.
