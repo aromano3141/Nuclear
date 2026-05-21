@@ -1,81 +1,44 @@
 {
-    "total_records": 7151,
-    "targets": [
-        "As",
-        "Cd",
-        "Co",
-        "Co-60",
-        "Cr",
-        "Cs-134",
-        "Cs-137",
-        "Cu",
-        "Fe",
-        "K-40",
-        "Mn",
-        "Ni",
-        "Pb",
-        "Pb-210",
-        "Ra-226",
-        "Ra-228",
-        "Sr-85",
-        "Sr-90",
-        "Th-232",
-        "U-238",
-        "Zn",
-        "Zn-65"
-    ],
-    "nn_performance": {
-        "r2": 0.2651094985024206,
-        "rmse": 0.8477311563485764
+    "n_samples": 2335,
+    "global_performance": {
+        "R2": 0.3944922351412774,
+        "RMSE": 0.7555771879024917
     },
-    "data_availability": {
-        "Al": 0,
-        "Am-241": 4,
-        "As": 26,
-        "Ba": 0,
-        "Ca": 4,
-        "Cd": 64,
-        "Co": 27,
-        "Co-60": 33,
-        "Cr": 54,
-        "Cs-134": 21,
-        "Cs-137": 309,
-        "Cu": 61,
-        "Fe": 31,
-        "Hg": 0,
-        "K": 4,
-        "K-40": 499,
-        "La": 0,
-        "Mg": 4,
-        "Mn": 39,
-        "Mo": 8,
-        "Na": 4,
-        "Ni": 37,
-        "P": 0,
-        "Pb": 62,
-        "Pb-210": 70,
-        "Po-210": 12,
-        "Pu-239,240": 5,
-        "Ra-226": 264,
-        "Ra-228": 22,
-        "Rb": 0,
-        "S": 0,
-        "Sb": 0,
-        "Sc": 0,
-        "Se": 2,
-        "Sm": 0,
-        "Sr": 8,
-        "Sr-85": 21,
-        "Sr-90": 53,
-        "Th-228": 20,
-        "Th-230": 2,
-        "Th-232": 313,
-        "U-234": 0,
-        "U-238": 135,
-        "V": 10,
-        "Y-88": 2,
-        "Zn": 66,
-        "Zn-65": 39
+    "family_performance": {
+        "Alkali": {
+            "R2": 0.30778189494448993,
+            "RMSE": 0.7379104771486646,
+            "N": 179
+        },
+        "Metals": {
+            "R2": 0.28925019424816467,
+            "RMSE": 0.8050488481437692,
+            "N": 127
+        },
+        "Actinides": {
+            "R2": 0.21772722313019988,
+            "RMSE": 0.7338428223502845,
+            "N": 157
+        }
     },
-    "pca_subset": null
+    "pft_distribution": {
+        "Other": 746,
+        "Cereal Grains": 601,
+        "Root/Tuber Crops": 358,
+        "Leafy Vegetables": 235,
+        "Tree Fruits": 178,
+        "Fruit Vegetables": 153,
+        "Woody Perennials": 39,
+        "Legumes": 25
+    },
+    "climate_distribution": {
+        "Humid Tropical": 1749,
+        "Seasonally Dry Tropical": 565,
+        "Arid Tropical": 21
+    },
+    "family_weights": {
+        "Alkali": 0.8297537182870356,
+        "Metals": 1.3044163153275976,
+        "Actinides": 0.8658299663853668
+    }
 }

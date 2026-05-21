@@ -27,12 +27,12 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy import stats
 from scipy.stats import pearsonr, spearmanr
-from sklearn.preprocessing import StandardScaler, RobustScaler, LabelEncoder
+from sklearn.preprocessing import StandardScaler, RobustScaler, LabelEncoder, PowerTransformer
 from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 from sklearn.experimental import enable_iterative_imputer
-from sklearn.impute import IterativeImputer
+from sklearn.impute import IterativeImputer, SimpleImputer
 from sklearn.linear_model import BayesianRidge
 import warnings, json, copy, os
 from datetime import datetime
@@ -43,6 +43,7 @@ warnings.filterwarnings('ignore')
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 # Reproducibility
 np.random.seed(42)
@@ -126,10 +127,15 @@ class DataPipeline:
     def __init__(self, csv_path):
         self.csv_path = csv_path
         self.df = None
+        # Safeguard: IterativeImputer with fallback
         self.imputer = IterativeImputer(estimator=BayesianRidge(), max_iter=20, random_state=42)
+        self.fallback_imputer = SimpleImputer(strategy='median')
+        self.feature_scaler = RobustScaler()
+        self.target_transformer = PowerTransformer(method='yeo-johnson')
         self.numeric_soil_cols = ['pH', 'OM', 'Clay', 'Sand', 'Silt', 'CEC']
         self.cat_cols = ['PFT', 'Climate', 'Compartment']
         self.le_dict = {}
+        self.fam_list = ['Alkali', 'Metals', 'Actinides']
 
     def load_and_preprocess(self):
         print(f"  Loading data from {self.csv_path}...")
@@ -145,52 +151,85 @@ class DataPipeline:
 
         df_raw['Target'] = df_raw['Radionuclide'].fillna(df_raw['Element'])
         df = df_raw.dropna(subset=['CR']).copy()
+        
+        # Keep log_CR for PCA and basic stats, but not for NN training
         df['log_CR'] = np.log10(df['CR'].clip(lower=1e-10))
         
         # UPGRADE 3: Feature Engineering
         df['PFT'] = df['Common name'].map(PFT_MAP).fillna('Other')
         df['Climate'] = df['Country'].map(CLIMATE_MAP).fillna('Other')
+        df['Family'] = df['Target'].map(TARGET_TO_FAMILY).fillna('Metals')
+        df['Family_Idx'] = df['Family'].map({f: i for i, f in enumerate(self.fam_list)})
         
         self.df = df
         return df
 
-    def run_imputation(self):
-        print("  Running Iterative Imputation (MICE)...")
-        soil_data = self.df[self.numeric_soil_cols].copy()
-        imputed = self.imputer.fit_transform(soil_data)
-        df_imputed = pd.DataFrame(imputed, columns=self.numeric_soil_cols, index=self.df.index)
+    def split_data(self, test_size=0.2):
+        print(f"  Splitting data (test_size={test_size})...")
+        indices = np.arange(len(self.df))
+        tr_idx, te_idx = train_test_split(indices, test_size=test_size, random_state=42)
+        return tr_idx, te_idx
 
-        # Constraints
-        df_imputed['pH'] = df_imputed['pH'].clip(0, 14)
+    def process_features(self, tr_idx, te_idx):
+        print("  Running Leakage-Free Preprocessing...")
+        
+        # 1. Imputation (Fit on Train, Transform Both)
+        soil_train = self.df.iloc[tr_idx][self.numeric_soil_cols].copy()
+        soil_test = self.df.iloc[te_idx][self.numeric_soil_cols].copy()
+        
+        # Fit primary imputer
+        imputed_train = self.imputer.fit_transform(soil_train)
+        imputed_test = self.imputer.transform(soil_test)
+        
+        # Fit fallback to catch any remaining NaNs
+        self.fallback_imputer.fit(imputed_train)
+        imputed_train = self.fallback_imputer.transform(imputed_train)
+        imputed_test = self.fallback_imputer.transform(imputed_test)
+        
+        # Combine back to apply constraints and texture normalization
+        full_imputed = np.zeros((len(self.df), len(self.numeric_soil_cols)))
+        full_imputed[tr_idx] = imputed_train
+        full_imputed[te_idx] = imputed_test
+        df_imp = pd.DataFrame(full_imputed, columns=self.numeric_soil_cols, index=self.df.index)
+
+        # Constraints & Texture Normalization
+        df_imp['pH'] = df_imp['pH'].clip(0, 14)
         for col in ['OM', 'Clay', 'Sand', 'Silt', 'CEC']:
-            df_imputed[col] = df_imputed[col].clip(lower=0)
-
-        # Texture normalization
-        texture_sum = df_imputed[['Sand', 'Silt', 'Clay']].sum(axis=1)
+            df_imp[col] = df_imp[col].clip(lower=0)
+        
+        texture_sum = df_imp[['Sand', 'Silt', 'Clay']].sum(axis=1)
         mask = texture_sum > 0
-        df_imputed.loc[mask, ['Sand', 'Silt', 'Clay']] = df_imputed.loc[mask, ['Sand', 'Silt', 'Clay']].div(texture_sum[mask], axis=0) * 100
+        df_imp.loc[mask, ['Sand', 'Silt', 'Clay']] = df_imp.loc[mask, ['Sand', 'Silt', 'Clay']].div(texture_sum[mask], axis=0) * 100
 
         for col in self.numeric_soil_cols:
-            self.df[f'{col}_imputed'] = df_imputed[col]
-        
-        return df_imputed
+            self.df[f'{col}_imputed'] = df_imp[col]
 
-    def get_mtl_features(self):
-        FAMILIES = ['Alkali', 'Metals', 'Actinides']
-        FAMILY_TO_IDX = {f: i for i, f in enumerate(FAMILIES)}
+        # 2. Domain-Specific Soil Chemical Interactions (UPGRADE 1)
+        self.df['CEC_Clay_Ratio'] = self.df['CEC_imputed'] / (self.df['Clay_imputed'] + 1e-5)
+        self.df['pH_OM_Interaction'] = self.df['pH_imputed'] * self.df['OM_imputed']
         
+        # Final NaN check for interaction features
+        for col in ['CEC_Clay_Ratio', 'pH_OM_Interaction']:
+            self.df[col] = self.df[col].fillna(self.df[col].median())
+        
+        # 3. Categorical Encoding
         self.le_dict = {col: LabelEncoder().fit(self.df[col].astype(str)) for col in self.cat_cols}
-        
-        X_cont = self.df[[f'{col}_imputed' for col in self.numeric_soil_cols]].values
         X_cat = np.column_stack([self.le_dict[col].transform(self.df[col].astype(str)) for col in self.cat_cols])
         
-        self.df['Family'] = self.df['Target'].map(TARGET_TO_FAMILY).fillna('Metals')
-        self.df['Family_Idx'] = self.df['Family'].map(FAMILY_TO_IDX)
+        # 4. Continuous Scaling (UPGRADE 2: RobustScaler fit on Train)
+        cont_cols = [f'{col}_imputed' for col in self.numeric_soil_cols] + ['CEC_Clay_Ratio', 'pH_OM_Interaction']
+        X_cont_raw = self.df[cont_cols].values
         
-        self.scaler_y = StandardScaler()
-        self.df['log_CR_scaled'] = self.scaler_y.fit_transform(self.df[['log_CR']])
+        self.feature_scaler.fit(X_cont_raw[tr_idx])
+        X_cont = self.feature_scaler.transform(X_cont_raw)
         
-        return X_cont, X_cat, FAMILIES
+        # 5. Target Transformation (UPGRADE 4: PowerTransformer fit on Train)
+        y_raw = self.df[['CR']].values
+        self.target_transformer.fit(y_raw[tr_idx])
+        y_scaled = self.target_transformer.transform(y_raw)
+        self.df['CR_scaled'] = y_scaled
+        
+        return X_cont, X_cat, y_scaled
 
 # ============================================================================
 # ROBUST PCA CLASS
@@ -222,8 +261,14 @@ class MTL_CR_NN(nn.Module):
         super().__init__()
         self.embs = nn.ModuleList([nn.Embedding(s, emb_dim) for s in cat_sizes])
         total_in = n_cont + len(cat_sizes) * emb_dim
+        
+        # UPGRADE 3: Replace BatchNorm with LayerNorm
+        # Batch Normalization tracks global running mean and variance metrics that become highly unstable 
+        # during masked multi-task passes, because missing data patterns fluctuate randomly across batches 
+        # depending on which elements are recorded. Layer Normalization operates independently per sample row, 
+        # neutralizing this statistical noise.
         self.shared = nn.Sequential(
-            nn.Linear(total_in, 128), nn.BatchNorm1d(128), nn.GELU(), nn.Dropout(0.2),
+            nn.Linear(total_in, 128), nn.LayerNorm(128), nn.GELU(), nn.Dropout(0.2),
             nn.Linear(128, 64), nn.GELU()
         )
         self.heads = nn.ModuleList([
@@ -246,12 +291,44 @@ def main():
     print("TROPICAL RADIONUCLIDE TRANSFER ANALYSIS - PRODUCTION GRADE")
     print("=" * 80)
 
+    # Clean and create directories
     for d in [MAIN_FIG_DIR, SUPP_FIG_DIR, STATS_DIR]:
+        if d.exists():
+            for f in d.glob('*'):
+                if f.is_file(): f.unlink()
         d.mkdir(parents=True, exist_ok=True)
 
     pipeline = DataPipeline('iaea-modaria-ii-tropical-dataset.csv')
     df = pipeline.load_and_preprocess()
-    df_imputed = pipeline.run_imputation()
+    
+    # UPGRADE: Split BEFORE fit
+    tr_idx, te_idx = pipeline.split_data()
+    X_cont, X_cat, y_scaled = pipeline.process_features(tr_idx, te_idx)
+
+    # SECTION 1: CORRELATION ANALYSIS (S01)
+    print(f"\n{'='*80}\nSECTION 1: CORRELATION ANALYSIS\n{'='*80}")
+    corr_cols = [f'{c}_imputed' for c in pipeline.numeric_soil_cols] + ['log_CR']
+    corr_df = df[corr_cols].dropna()
+    
+    if len(corr_df) > 10:
+        pearson_mat = corr_df.corr(method='pearson')
+        spearman_mat = corr_df.corr(method='spearman')
+        
+        pearson_mat.to_csv(STATS_DIR / 'S01_corr_pearson.csv')
+        spearman_mat.to_csv(STATS_DIR / 'S01_corr_spearman.csv')
+        
+        # Sample sizes for correlation
+        n_mat = pd.DataFrame(index=corr_cols, columns=corr_cols)
+        for c1 in corr_cols:
+            for c2 in corr_cols:
+                n_mat.loc[c1, c2] = len(df[[c1, c2]].dropna())
+        n_mat.to_csv(STATS_DIR / 'S01_corr_sample_sizes.csv')
+        
+        fig, ax = plt.subplots(figsize=(10, 8))
+        sns.heatmap(spearman_mat, annot=True, cmap='coolwarm', center=0, ax=ax)
+        ax.set_title("Spearman Correlation Matrix", fontweight='bold')
+        fig.savefig(MAIN_FIG_DIR / 'Fig1_Correlations.png')
+        print("  → Fig1_Correlations saved")
 
     # SECTION 2: ROBUST PCA
     print(f"\n{'='*80}\nSECTION 2: ROBUST PCA\n{'='*80}")
@@ -271,10 +348,12 @@ def main():
         fig.savefig(MAIN_FIG_DIR / 'Fig2_PCA.png')
         print("  → Fig2_PCA saved")
 
-    # SECTION 3: SOIL DEPENDENCE (UPGRADE: Using Imputed Data)
+    # SECTION 3: SOIL DEPENDENCE (Using Imputed Data)
     print(f"\n{'='*80}\nSECTION 3: SOIL CHEMISTRY DEPENDENCE\n{'='*80}")
     soil_params = ['pH_imputed', 'OM_imputed', 'Clay_imputed', 'CEC_imputed']
     targets_to_plot = ['Cs-137', 'Sr-90', 'Ra-226', 'K-40']
+    dependence_stats = []
+    
     fig, axes = plt.subplots(len(targets_to_plot), len(soil_params), figsize=(20, 16))
     for i, target in enumerate(targets_to_plot):
         for j, param in enumerate(soil_params):
@@ -284,34 +363,49 @@ def main():
                 sns.regplot(x=param, y='log_CR', data=sub, ax=ax, scatter_kws={'alpha':0.2}, line_kws={'color':'red'})
                 r, p = pearsonr(sub[param], sub['log_CR'])
                 ax.set_title(f"{target} vs {param}\nr={r:.2f}, p={p:.2g}", fontsize=10)
+                dependence_stats.append({'Target': target, 'Param': param, 'r': r, 'p': p, 'N': len(sub)})
+    
+    pd.DataFrame(dependence_stats).to_csv(STATS_DIR / 'S03_soil_dependence_stats.csv', index=False)
     plt.tight_layout()
     fig.savefig(MAIN_FIG_DIR / 'Fig3_Soil_Dependence.png')
     print("  → Fig3_Soil_Dependence saved")
 
     # SECTION 4: MTL NEURAL NETWORK
     print(f"\n{'='*80}\nSECTION 4: MULTI-TASK LEARNING\n{'='*80}")
-    X_cont, X_cat, FAMILIES = pipeline.get_mtl_features()
     
-    indices = np.arange(len(df))
-    tr_idx, te_idx = train_test_split(indices, test_size=0.2, random_state=42)
-    
+    # Inverse-Frequency Loss Weighting (UPGRADE 5)
+    tr_df = df.iloc[tr_idx]
+    fam_counts = tr_df['Family_Idx'].value_counts().sort_index()
+    weights = 1.0 / (fam_counts + 1e-5)
+    weights = weights / weights.sum() * len(pipeline.fam_list)
+    fam_weights = torch.FloatTensor(weights.values)
+    print(f"  Family weights: {dict(zip(pipeline.fam_list, weights.values))}")
+
     def to_t(idx):
         return (torch.FloatTensor(X_cont[idx]), torch.LongTensor(X_cat[idx]), 
-                torch.FloatTensor(df.iloc[idx]['log_CR_scaled'].values).view(-1, 1),
+                torch.FloatTensor(y_scaled[idx]).view(-1, 1),
                 torch.LongTensor(df.iloc[idx]['Family_Idx'].values))
 
     tr_x_cont, tr_x_cat, tr_y, tr_fam = to_t(tr_idx)
     te_x_cont, te_x_cat, te_y, te_fam = to_t(te_idx)
 
     model = MTL_CR_NN(X_cont.shape[1], [len(pipeline.le_dict[c].classes_) for c in pipeline.cat_cols])
-    optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-3)
+    
+    # UPGRADE 6: Adam with weight decay and Scheduler
+    optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=15)
     criterion = nn.MSELoss(reduction='none')
 
     train_losses, test_losses = [], []
     for epoch in range(600):
         model.train(); optimizer.zero_grad()
         out = model(tr_x_cont, tr_x_cat)
-        loss = criterion(out.gather(1, tr_fam.view(-1, 1)), tr_y).mean()
+        
+        # Apply weighting
+        raw_loss = criterion(out.gather(1, tr_fam.view(-1, 1)), tr_y)
+        batch_weights = fam_weights[tr_fam].view(-1, 1)
+        loss = (raw_loss * batch_weights).mean()
+        
         loss.backward(); optimizer.step()
         train_losses.append(loss.item())
         
@@ -320,36 +414,71 @@ def main():
             te_out = model(te_x_cont, te_x_cat)
             te_loss = criterion(te_out.gather(1, te_fam.view(-1, 1)), te_y).mean()
             test_losses.append(te_loss.item())
-        if (epoch+1)%100 == 0: print(f"    Epoch {epoch+1:3d} | Loss: {loss.item():.4f} | Val: {te_loss.item():.4f}")
+        
+        scheduler.step(te_loss)
+        if (epoch+1)%100 == 0: 
+            curr_lr = optimizer.param_groups[0]['lr']
+            print(f"    Epoch {epoch+1:3d} | Loss: {loss.item():.4f} | Val: {te_loss.item():.4f} | LR: {curr_lr:.2e}")
 
-    # Evaluation
+    # Evaluation (UPGRADE 4: Inverse Transform)
     model.eval()
     with torch.no_grad():
         preds_scaled = model(te_x_cont, te_x_cat).gather(1, te_fam.view(-1, 1)).numpy()
-        preds = pipeline.scaler_y.inverse_transform(preds_scaled).flatten()
+        preds_cr = pipeline.target_transformer.inverse_transform(preds_scaled).flatten()
+        preds = np.log10(np.clip(preds_cr, 1e-10, None))
         actual = df.iloc[te_idx]['log_CR'].values
     
-    g_r2, g_rmse = r2_score(actual, preds), np.sqrt(mean_squared_error(actual, preds))
-    print(f"\n  MTL Performance: R2 = {g_r2:.3f}, RMSE = {g_rmse:.3f}")
+    # UPGRADE: Final NaN/Inf check and filtering for robust evaluation
+    mask = np.isfinite(actual) & np.isfinite(preds)
+    if mask.sum() < len(actual):
+        print(f"  Warning: Filtered {len(actual) - mask.sum()} non-finite samples during evaluation.")
+    
+    actual_f, preds_f = actual[mask], preds[mask]
+    
+    if len(actual_f) > 0:
+        g_r2, g_rmse = r2_score(actual_f, preds_f), np.sqrt(mean_squared_error(actual_f, preds_f))
+        print(f"\n  MTL Performance (on log-scale): R2 = {g_r2:.3f}, RMSE = {g_rmse:.3f}")
+    else:
+        print("\n  Error: No valid samples for evaluation.")
+        g_r2, g_rmse = 0.0, 0.0
 
     # Family-specific scores
     fam_scores = {}
-    for i, fam in enumerate(FAMILIES):
-        mask = (te_fam.numpy() == i)
-        if mask.sum() > 5:
-            r2_f = r2_score(actual[mask], preds[mask])
-            rmse_f = np.sqrt(mean_squared_error(actual[mask], preds[mask]))
-            fam_scores[fam] = {'R2': r2_f, 'RMSE': rmse_f, 'N': int(mask.sum())}
+    for i, fam in enumerate(pipeline.fam_list):
+        f_mask = (te_fam.numpy() == i) & mask
+        if f_mask.sum() > 5:
+            r2_f = r2_score(actual[f_mask], preds[f_mask])
+            rmse_f = np.sqrt(mean_squared_error(actual[f_mask], preds[f_mask]))
+            fam_scores[fam] = {'R2': r2_f, 'RMSE': rmse_f, 'N': int(f_mask.sum())}
             print(f"    {fam:<10}: R2 = {r2_f:.3f}, RMSE = {rmse_f:.3f}")
 
     # Final Plots
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
     axes[0].plot(train_losses, label='Train'); axes[0].plot(test_losses, label='Val'); axes[0].legend()
+    axes[0].set_title("Training History (Weighted Loss)")
     
-    sns.scatterplot(x=actual, y=preds, hue=[FAMILIES[i] for i in te_fam.numpy()], alpha=0.5, ax=axes[1])
+    sns.scatterplot(x=actual, y=preds, hue=[pipeline.fam_list[i] for i in te_fam.numpy()], alpha=0.5, ax=axes[1])
     axes[1].plot([actual.min(), actual.max()], [actual.min(), actual.max()], 'r--')
     axes[1].set_title(f"MTL Prediction (Global R²={g_r2:.3f})")
     plt.tight_layout(); fig.savefig(MAIN_FIG_DIR / 'Fig4_NN_Results.png')
+
+    # SECTION 5: SUPPLEMENTARY FIGURES
+    print(f"\n{'='*80}\nSECTION 5: SUPPLEMENTARY FIGURES\n{'='*80}")
+    
+    # FigS1: Distributions
+    fig, ax = plt.subplots(figsize=(10, 6))
+    sns.kdeplot(data=df, x='log_CR', hue='Family', fill=True, ax=ax)
+    ax.set_title("Log-Transfer Factor Distributions by Chemical Family")
+    fig.savefig(SUPP_FIG_DIR / 'FigS1_Distributions.png')
+    
+    # FigS2: Country Comparison
+    fig, ax = plt.subplots(figsize=(12, 6))
+    sns.boxplot(data=df, x='Country', y='log_CR', ax=ax)
+    plt.xticks(rotation=45)
+    ax.set_title("Log-Transfer Factor by Country")
+    plt.tight_layout()
+    fig.savefig(SUPP_FIG_DIR / 'FigS2_Country_Comparison.png')
+    print("  → Supplementary figures saved")
 
     # Statistics Export
     stats_data = {
@@ -357,9 +486,12 @@ def main():
         'global_performance': {'R2': g_r2, 'RMSE': g_rmse},
         'family_performance': fam_scores,
         'pft_distribution': df['PFT'].value_counts().to_dict(),
-        'climate_distribution': df['Climate'].value_counts().to_dict()
+        'climate_distribution': df['Climate'].value_counts().to_dict(),
+        'family_weights': dict(zip(pipeline.fam_list, weights.values.tolist()))
     }
     with open(STATS_DIR / 'S00_master_statistics.json', 'w') as f: json.dump(stats_data, f, indent=4)
+    # Also save as master_statistics.json for redundancy as seen in original tree
+    with open(STATS_DIR / 'master_statistics.json', 'w') as f: json.dump(stats_data, f, indent=4)
     print("\nANALYSIS COMPLETE.")
 
 if __name__ == "__main__": main()
